@@ -1,0 +1,36 @@
+{
+	"name": "use-dynamodb-scheduler",
+	"dependencies": {
+		"lodash": "^4.17.21",
+		"use-async-helpers": "^1.0.15",
+		"use-dynamodb": "^1.0.35",
+		"zod": "^3.24.1",
+		"zod-default-instance": "^1.0.12"
+	},
+	"devDependencies": {
+		"@types/lodash": "^4.17.13",
+		"@types/node": "^22.10.2",
+		"@vitest/coverage-v8": "2.1.8",
+		"prettier": "^3.4.2",
+		"typescript": "^5.7.2",
+		"vitest": "^2.1.8"
+	},
+	"files": [
+		"dist"
+	],
+	"license": "MIT",
+	"main": "dist/index.js",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/feliperohdee/use-dynamodb"
+	},
+	"scripts": {
+		"build": "rm -rf dist && tsc -p tsconfig.json",
+		"lint": "prettier --write . && tsc -p tsconfig.json",
+		"npm-publish": "yarn test --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
+		"npm-publish-only": "yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
+		"test": "./.test.sh",
+		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
+	},
+	"version": "1.0.0"
+}
