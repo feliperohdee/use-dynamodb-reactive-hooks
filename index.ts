@@ -582,11 +582,11 @@ class Scheduler {
 
 		return {
 			count: res.count,
-			items: _.map(res.items, (item: Scheduler.Task) => {
+			items: _.map(res.items, (task: Scheduler.Task) => {
 				return {
-					namespace: item.namespace,
-					id: item.id,
-					schedule: item.schedule
+					namespace: task.namespace,
+					id: task.id,
+					schedule: task.schedule
 				};
 			})
 		};
@@ -614,7 +614,7 @@ class Scheduler {
 			return;
 		}
 
-		const now = new Date().toISOString();
+		const date = new Date().toISOString();
 		const repeatCount = task.repeat.count + 1;
 		const resettedTask: Scheduler.Task = taskShape({
 			...task,
@@ -631,7 +631,7 @@ class Scheduler {
 				status: 0
 			},
 			retries: 0,
-			schedule: this.$calculateNextSchedule(now, task.repeat.rule),
+			schedule: this.$calculateNextSchedule(date, task.repeat.rule),
 			status: 'PENDING',
 			url: task.url
 		});
