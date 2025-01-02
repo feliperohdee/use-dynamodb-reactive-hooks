@@ -24,9 +24,6 @@ const schedulerTaskSchema = z.object({
 		.default(() => {
 			return new Date().toISOString();
 		}),
-	__ts: z.number().default(() => {
-		return Date.now();
-	}),
 	__updatedAt: z
 		.string()
 		.datetime()
@@ -60,7 +57,6 @@ const schedulerTaskSchema = z.object({
 const schedulerTaskInputSchema = schedulerTaskSchema
 	.omit({
 		__createdAt: true,
-		__ts: true,
 		__updatedAt: true,
 		errors: true,
 		id: true,
@@ -212,7 +208,7 @@ class Scheduler {
 		return res ? taskShape(res) : null;
 	}
 
-	async fetch(args: Scheduler.FetchInput): Promise<Dynamodb.MultiResponse<Scheduler.Task>> {
+	async fetch(args: Scheduler.FetchInput): Promise<Dynamodb.MultiResponse<Scheduler.Task, false>> {
 		args = await schedulerFetchInputSchema.parseAsync(args);
 
 		let queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
@@ -260,8 +256,10 @@ class Scheduler {
 
 			const res = await this.db.query(queryOptions);
 
-			res.items = _.map(res.items, taskShape);
-			return res;
+			return {
+				...res,
+				items: _.map(res.items, taskShape)
+			};
 		}
 
 		queryOptions = {
@@ -286,8 +284,10 @@ class Scheduler {
 
 		const res = await this.db.query(queryOptions);
 
-		res.items = _.map(res.items, taskShape);
-		return res;
+		return {
+			...res,
+			items: _.map(res.items, taskShape)
+		};
 	}
 
 	async get(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
@@ -528,12 +528,15 @@ class Scheduler {
 
 	async schedule(args: Scheduler.TaskInput): Promise<Scheduler.Task> {
 		args = await schedulerTaskInputSchema.parseAsync(args);
-		args = taskShape({
-			...args,
-			id: crypto.randomUUID()
-		});
 
-		return this.db.put(args);
+		const res = await this.db.put(
+			taskShape({
+				...args,
+				id: crypto.randomUUID()
+			})
+		);
+
+		return _.omit(res, ['__ts']);
 	}
 
 	async $scheduleNextRepetition(task: Scheduler.Task): Promise<Scheduler.Task | void> {

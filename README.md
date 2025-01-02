@@ -174,7 +174,6 @@ type Task = {
 	};
 	__createdAt: string;
 	__updatedAt: string;
-	__ts: number;
 };
 ```
 
@@ -195,7 +194,6 @@ yarn test:coverage
 
 ## 📝 Notes
 
-- The scheduler automatically handles optimistic locking using the `__ts` field
 - Failed tasks will be retried according to the `maxRetries` configuration
 - Recurring tasks are automatically rescheduled after successful completion
 - The scheduler uses DynamoDB's GSI capabilities for efficient task querying

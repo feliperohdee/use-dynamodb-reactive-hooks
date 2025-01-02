@@ -953,7 +953,6 @@ describe('/index.ts', () => {
 				expect.objectContaining({
 					...task,
 					__createdAt: expect.any(String),
-					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					id: expect.any(String)
 				})
@@ -962,7 +961,6 @@ describe('/index.ts', () => {
 				expect.objectContaining({
 					...task,
 					__createdAt: res.__createdAt,
-					__ts: res.__ts,
 					__updatedAt: res.__updatedAt,
 					id: res.id
 				})
@@ -1014,7 +1012,6 @@ describe('/index.ts', () => {
 
 			expect(scheduler.db.put).toHaveBeenCalledWith({
 				__createdAt: expect.any(String),
-				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				body: task.body,
 				headers: task.headers,
