@@ -11,13 +11,13 @@ const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
 
 const schedulerTaskStatus = z.enum(['COMPLETED', 'FAILED', 'SUSPENDED', 'PENDING', 'PROCESSING']);
-const schedulerTaskRepeatRuleSchema = z.object({
+const schedulerTaskRepeatRule = z.object({
 	interval: z.number().min(1),
 	max: z.number().min(0),
 	unit: z.enum(['minutes', 'hours', 'days'])
 });
 
-const schedulerTaskSchema = z.object({
+const schedulerTask = z.object({
 	__createdAt: z
 		.string()
 		.datetime()
@@ -41,7 +41,7 @@ const schedulerTaskSchema = z.object({
 		count: z.number(),
 		enabled: z.boolean().default(false),
 		parent: z.string(),
-		rule: schedulerTaskRepeatRuleSchema
+		rule: schedulerTaskRepeatRule
 	}),
 	response: z.object({
 		body: z.string(),
@@ -54,7 +54,7 @@ const schedulerTaskSchema = z.object({
 	url: z.string().url()
 });
 
-const schedulerTaskInputSchema = schedulerTaskSchema
+const schedulerTaskInput = schedulerTask
 	.omit({
 		__createdAt: true,
 		__updatedAt: true,
@@ -65,8 +65,8 @@ const schedulerTaskInputSchema = schedulerTaskSchema
 		status: true
 	})
 	.extend({
-		headers: schedulerTaskSchema.shape.headers.optional(),
-		repeat: schedulerTaskSchema.shape.repeat
+		headers: schedulerTask.shape.headers.optional(),
+		repeat: schedulerTask.shape.repeat
 			.omit({
 				count: true,
 				parent: true
@@ -74,12 +74,12 @@ const schedulerTaskInputSchema = schedulerTaskSchema
 			.optional()
 	});
 
-const schedulerDeleteInputSchema = z.object({
+const schedulerDeleteInput = z.object({
 	id: z.string(),
 	namespace: z.string()
 });
 
-const schedulerFetchInputSchema = z.object({
+const schedulerFetchInput = z.object({
 	desc: z.boolean().default(false),
 	from: z.string().datetime({ offset: true }).optional(),
 	id: z.string().optional(),
@@ -90,12 +90,12 @@ const schedulerFetchInputSchema = z.object({
 	to: z.string().datetime({ offset: true }).optional()
 });
 
-const schedulerGetInputSchema = z.object({
+const schedulerGetInput = z.object({
 	id: z.string(),
 	namespace: z.string()
 });
 
-const schedulerProcessDryrunInputSchema = z.object({
+const schedulerProcessDryrunInput = z.object({
 	date: z.string().datetime({ offset: true }).nullable().optional(),
 	id: z.string().optional(),
 	limit: z.number().min(1).default(100),
@@ -112,18 +112,18 @@ namespace Scheduler {
 		tableName: string;
 	};
 
-	export type DeleteInput = z.input<typeof schedulerDeleteInputSchema>;
-	export type FetchInput = z.input<typeof schedulerFetchInputSchema>;
-	export type GetInput = z.input<typeof schedulerGetInputSchema>;
-	export type ProcessDryrunInput = z.input<typeof schedulerProcessDryrunInputSchema>;
-	export type Task = z.infer<typeof schedulerTaskSchema>;
-	export type TaskInput = z.infer<typeof schedulerTaskInputSchema>;
-	export type TaskRepeatRule = z.infer<typeof schedulerTaskRepeatRuleSchema>;
+	export type DeleteInput = z.input<typeof schedulerDeleteInput>;
+	export type FetchInput = z.input<typeof schedulerFetchInput>;
+	export type GetInput = z.input<typeof schedulerGetInput>;
+	export type ProcessDryrunInput = z.input<typeof schedulerProcessDryrunInput>;
+	export type Task = z.infer<typeof schedulerTask>;
+	export type TaskInput = z.infer<typeof schedulerTaskInput>;
+	export type TaskRepeatRule = z.infer<typeof schedulerTaskRepeatRule>;
 	export type TaskStatus = z.infer<typeof schedulerTaskStatus>;
 }
 
 const taskShape = (task: Partial<Scheduler.Task | Scheduler.TaskInput>): Scheduler.Task => {
-	return zDefault(schedulerTaskSchema, task);
+	return zDefault(schedulerTask, task);
 };
 
 class Scheduler {
@@ -194,7 +194,7 @@ class Scheduler {
 	}
 
 	async delete(args: Scheduler.DeleteInput): Promise<Scheduler.Task | null> {
-		args = await schedulerDeleteInputSchema.parseAsync(args);
+		args = await schedulerDeleteInput.parseAsync(args);
 
 		const res = await this.db.delete({
 			filter: {
@@ -209,7 +209,7 @@ class Scheduler {
 	}
 
 	async fetch(args: Scheduler.FetchInput): Promise<Dynamodb.MultiResponse<Scheduler.Task, false>> {
-		args = await schedulerFetchInputSchema.parseAsync(args);
+		args = await schedulerFetchInput.parseAsync(args);
 
 		let queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
 			attributeNames: {},
@@ -291,7 +291,7 @@ class Scheduler {
 	}
 
 	async get(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
-		args = await schedulerGetInputSchema.parseAsync(args);
+		args = await schedulerGetInput.parseAsync(args);
 
 		const res = await this.db.get({
 			item: {
@@ -459,12 +459,11 @@ class Scheduler {
 		return { processed, errors };
 	}
 
-	// add date and args with validation
 	async processDryrun(args: Scheduler.ProcessDryrunInput = {}): Promise<{
 		count: number;
 		items: { namespace: string; id: string; schedule: string }[];
 	}> {
-		args = await schedulerProcessDryrunInputSchema.parseAsync(args);
+		args = await schedulerProcessDryrunInput.parseAsync(args);
 
 		const date = args.date ? new Date(args.date).toISOString() : new Date().toISOString();
 		const queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
@@ -527,7 +526,7 @@ class Scheduler {
 	}
 
 	async schedule(args: Scheduler.TaskInput): Promise<Scheduler.Task> {
-		args = await schedulerTaskInputSchema.parseAsync(args);
+		args = await schedulerTaskInput.parseAsync(args);
 
 		const res = await this.db.put(
 			taskShape({
