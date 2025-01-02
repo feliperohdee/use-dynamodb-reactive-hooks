@@ -115,19 +115,35 @@ const task = await scheduler.get({
 ### Managing Tasks
 
 ```typescript
-// Delete a task
+// Delete a single task
 const deletedTask = await scheduler.delete({
 	namespace: 'my-app',
 	id: 'task-id'
 });
 
+// Delete multiple tasks based on criteria
+const { count, items } = await scheduler.deleteMany({
+	namespace: 'my-app',
+	status: 'COMPLETED',
+	from: '2024-03-01T00:00:00Z',
+	to: '2024-03-31T23:59:59Z'
+});
+
 // Clear all tasks in a namespace
 const { count } = await scheduler.clear('my-app');
 
-// Suspend a task (prevent it from being processed)
+// Suspend a single task (prevent it from being processed)
 const suspendedTask = await scheduler.suspend({
 	namespace: 'my-app',
 	id: 'task-id'
+});
+
+// Suspend multiple tasks based on criteria
+const { count, items } = await scheduler.suspendMany({
+	namespace: 'my-app',
+	from: '2024-03-01T00:00:00Z',
+	to: '2024-03-31T23:59:59Z',
+	chunkLimit: 100 // Optional: process in chunks
 });
 
 // Unsuspend a task (allow it to be processed again)
@@ -199,6 +215,8 @@ yarn test:coverage
 - The scheduler uses DynamoDB's GSI capabilities for efficient task querying
 - All timestamps are in ISO 8601 format and stored in UTC
 - Task processing is concurrent with configurable limits
+- Batch operations (`deleteMany` and `suspendMany`) support chunked processing for better performance
+- The `chunkLimit` parameter in batch operations allows you to control the size of each processing batch
 
 ## 📄 License
 

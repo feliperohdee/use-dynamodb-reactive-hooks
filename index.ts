@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAll } from 'use-async-helpers';
+import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression } from 'use-dynamodb';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
@@ -79,16 +80,41 @@ const schedulerDeleteInput = z.object({
 	namespace: z.string()
 });
 
-const schedulerFetchInput = z.object({
-	desc: z.boolean().default(false),
-	from: z.string().datetime({ offset: true }).optional(),
-	id: z.string().optional(),
-	limit: z.number().min(1).max(1000).default(100),
-	namespace: z.string(),
-	startKey: z.record(z.unknown()).nullable().default(null),
-	status: schedulerTaskStatus.nullable().optional(),
-	to: z.string().datetime({ offset: true }).optional()
-});
+const schedulerFetchInput = z
+	.object({
+		chunkLimit: z.number().min(1).optional(),
+		desc: z.boolean().default(false),
+		from: z.string().datetime({ offset: true }).optional(),
+		id: z.string().optional(),
+		limit: z.number().min(1).default(100),
+		namespace: z.string(),
+		onChunk: z
+			.function()
+			.args(
+				z.object({
+					count: z.number(),
+					items: z.array(schedulerTask)
+				})
+			)
+			.returns(z.promise(z.void()))
+			.optional(),
+		startKey: z.record(z.unknown()).nullable().default(null),
+		status: schedulerTaskStatus.nullable().optional(),
+		to: z.string().datetime({ offset: true }).optional()
+	})
+	.refine(
+		data => {
+			if (_.isNil(data.onChunk)) {
+				return data.limit <= 1000;
+			}
+
+			return true;
+		},
+		{
+			message: 'Number must be less than or equal to 1000',
+			path: ['limit']
+		}
+	);
 
 const schedulerGetInput = z.object({
 	id: z.string(),
@@ -208,6 +234,31 @@ class Scheduler {
 		return res ? taskShape(res) : null;
 	}
 
+	async deleteMany(
+		args: Omit<Scheduler.FetchInput, 'limit' | 'onChunk' | 'startKey'>
+	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
+		args = await schedulerFetchInput.parseAsync(args);
+
+		let deleted: { id: string; namespace: string }[] = [];
+
+		await this.fetch({
+			...args,
+			chunkLimit: args.chunkLimit || 100,
+			limit: Infinity,
+			onChunk: async ({ items }) => {
+				await this.db.batchDelete(items);
+
+				deleted = [...deleted, ...items];
+			},
+			startKey: null
+		});
+
+		return {
+			count: _.size(deleted),
+			items: deleted
+		};
+	}
+
 	async fetch(args: Scheduler.FetchInput): Promise<Dynamodb.MultiResponse<Scheduler.Task, false>> {
 		args = await schedulerFetchInput.parseAsync(args);
 
@@ -246,8 +297,16 @@ class Scheduler {
 		}
 
 		if (args.id) {
+			if (args.chunkLimit) {
+				queryOptions.chunkLimit = args.chunkLimit;
+			}
+
 			if (args.from && args.to) {
 				queryOptions.filterExpression = '#schedule BETWEEN :from AND :to';
+			}
+
+			if (args.onChunk) {
+				queryOptions.onChunk = args.onChunk;
 			}
 
 			if (args.status) {
@@ -274,8 +333,16 @@ class Scheduler {
 			startKey: args.startKey
 		};
 
+		if (args.chunkLimit) {
+			queryOptions.chunkLimit = args.chunkLimit;
+		}
+
 		if (args.from && args.to) {
 			queryOptions.queryExpression = '#schedule BETWEEN :from AND :to';
+		}
+
+		if (args.onChunk) {
+			queryOptions.onChunk = args.onChunk;
 		}
 
 		if (args.status) {
@@ -596,6 +663,60 @@ class Scheduler {
 				updateExpression: 'SET #status = :suspended'
 			})
 		);
+	}
+
+	async suspendMany(
+		args: Omit<Scheduler.FetchInput, 'limit' | 'onChunk' | 'startKey'>
+	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
+		let suspended: { id: string; namespace: string }[] = [];
+
+		await this.fetch({
+			...args,
+			chunkLimit: args.chunkLimit || 100,
+			limit: Infinity,
+			onChunk: async ({ items }) => {
+				await Promise.all(
+					_.map(items, async item => {
+						try {
+							await this.db.client.send(
+								new UpdateCommand({
+									ExpressionAttributeNames: {
+										'#status': 'status'
+									},
+									ExpressionAttributeValues: {
+										':pending': 'PENDING',
+										':suspended': 'SUSPENDED'
+									},
+									ConditionExpression: '#status = :pending',
+									Key: {
+										namespace: item.namespace,
+										id: item.id
+									},
+									TableName: this.db.table,
+									UpdateExpression: 'SET #status = :suspended'
+								})
+							);
+
+							suspended = [
+								...suspended,
+								{
+									id: item.id,
+									namespace: item.namespace
+								}
+							];
+						} catch (err) {
+							// suppress error
+						}
+					})
+				);
+			},
+			startKey: null
+		});
+
+		return {
+			count: _.size(suspended),
+			items: suspended
+		};
 	}
 
 	async unsuspend(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {

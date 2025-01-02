@@ -3,7 +3,7 @@
 	"dependencies": {
 		"lodash": "^4.17.21",
 		"use-async-helpers": "^1.0.15",
-		"use-dynamodb": "^1.0.43",
+		"use-dynamodb": "^1.0.44",
 		"zod": "^3.24.1",
 		"zod-default-instance": "^1.0.12"
 	},
@@ -32,5 +32,5 @@
 		"test": "./.test.sh",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.1"
+	"version": "1.0.2"
 }

@@ -206,6 +206,53 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('deleteMany', () => {
+		beforeEach(() => {
+			vi.spyOn(scheduler.db, 'query');
+		});
+
+		afterAll(async () => {
+			await scheduler.clear('spec');
+		});
+
+		it('should delete many', async () => {
+			await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
+					return scheduler.schedule(task);
+				})
+			);
+
+			const res = await scheduler.deleteMany({
+				namespace: 'spec'
+			});
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {},
+				attributeValues: {},
+				chunkLimit: 100,
+				filterExpression: '',
+				index: 'namespace__schedule',
+				item: { namespace: 'spec' },
+				limit: Infinity,
+				onChunk: expect.any(Function),
+				queryExpression: '',
+				scanIndexForward: true,
+				startKey: null
+			});
+
+			expect(res).toEqual({
+				count: 3,
+				items: res.items
+			});
+
+			const retrieved = await scheduler.fetch({
+				namespace: 'spec'
+			});
+
+			expect(retrieved.count).toEqual(0);
+		});
+	});
+
 	describe('fetch', () => {
 		let tasks: Scheduler.Task[];
 
@@ -274,19 +321,23 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should fetch by [namespace] with limit and startKey', async () => {
+		it('should fetch by [namespace] with chunkLimit, limit, onChunk, startKey', async () => {
 			const res = await scheduler.fetch({
+				chunkLimit: Infinity,
 				limit: 2,
-				namespace: 'spec'
+				namespace: 'spec',
+				onChunk: vi.fn()
 			});
 
 			expect(scheduler.db.query).toHaveBeenCalledWith({
 				attributeNames: {},
 				attributeValues: {},
+				chunkLimit: Infinity,
 				filterExpression: '',
 				index: 'namespace__schedule',
 				item: { namespace: 'spec' },
 				limit: 2,
+				onChunk: expect.any(Function),
 				queryExpression: '',
 				scanIndexForward: true,
 				startKey: null
@@ -1169,6 +1220,85 @@ describe('/index.ts', () => {
 
 			expect(suspended).toBeNull();
 			expect(scheduler.db.update).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('suspendMany', () => {
+		beforeEach(() => {
+			vi.spyOn(scheduler.db.client, 'send');
+			vi.spyOn(scheduler.db, 'query');
+		});
+
+		afterAll(async () => {
+			await scheduler.clear('spec');
+		});
+
+		it('should suspend many tasks', async () => {
+			const tasks = await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
+					return scheduler.schedule(task);
+				})
+			);
+
+			// cause condition check to fail
+			await scheduler.suspend({
+				id: tasks[0].id,
+				namespace: tasks[0].namespace
+			});
+
+			const res = await scheduler.suspendMany({
+				namespace: 'spec'
+			});
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {},
+				attributeValues: {},
+				chunkLimit: 100,
+				filterExpression: '',
+				index: 'namespace__schedule',
+				item: { namespace: 'spec' },
+				limit: Infinity,
+				onChunk: expect.any(Function),
+				queryExpression: '',
+				scanIndexForward: true,
+				startKey: null
+			});
+
+			expect(scheduler.db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ExpressionAttributeNames: {
+							'#status': 'status'
+						},
+						ExpressionAttributeValues: {
+							':pending': 'PENDING',
+							':suspended': 'SUSPENDED'
+						},
+						ConditionExpression: '#status = :pending',
+						Key: {
+							namespace: expect.any(String),
+							id: expect.any(String)
+						},
+						TableName: expect.any(String),
+						UpdateExpression: 'SET #status = :suspended'
+					})
+				})
+			);
+
+			expect(res).toEqual({
+				count: 2,
+				items: res.items
+			});
+
+			const retrieved = await scheduler.fetch({
+				namespace: 'spec'
+			});
+
+			expect(
+				retrieved.items.every(item => {
+					return item.status === 'SUSPENDED';
+				})
+			).toBe(true);
 		});
 	});
 
