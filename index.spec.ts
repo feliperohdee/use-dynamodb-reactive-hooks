@@ -155,10 +155,8 @@ describe('/index.ts', () => {
 
 	describe('clear', () => {
 		it('should clear namespace', async () => {
-			const tasks = [createTestTask(), createTestTask(), createTestTask()];
-
 			await Promise.all(
-				_.map(tasks, task => {
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
 					return scheduler.schedule(task);
 				})
 			);
@@ -727,10 +725,8 @@ describe('/index.ts', () => {
 		});
 
 		it('should handle concurrent tasks', async () => {
-			const tasks = [createTestTask(), createTestTask(), createTestTask()];
-
-			await Promise.all(
-				_.map(tasks, task => {
+			const tasks = await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
 					return scheduler.schedule(task);
 				})
 			);
@@ -844,11 +840,11 @@ describe('/index.ts', () => {
 		});
 
 		it('should ignore suspended tasks during processing', async () => {
-			const tasks = [
-				await scheduler.schedule(createTestTask()),
-				await scheduler.schedule(createTestTask()),
-				await scheduler.schedule(createTestTask())
-			];
+			const tasks = await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
+					return scheduler.schedule(task);
+				})
+			);
 
 			// Suspend one task
 			await scheduler.suspend({
@@ -877,10 +873,8 @@ describe('/index.ts', () => {
 
 	describe('processDryrun', () => {
 		beforeAll(async () => {
-			const tasks = [createTestTask(), createTestTask(), createTestTask()];
-
 			await Promise.all(
-				_.map(tasks, task => {
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
 					return scheduler.schedule(task);
 				})
 			);
@@ -1267,6 +1261,7 @@ describe('/index.ts', () => {
 			expect(scheduler.db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConditionExpression: '#status = :pending',
 						ExpressionAttributeNames: {
 							'#status': 'status'
 						},
@@ -1274,7 +1269,6 @@ describe('/index.ts', () => {
 							':pending': 'PENDING',
 							':suspended': 'SUSPENDED'
 						},
-						ConditionExpression: '#status = :pending',
 						Key: {
 							namespace: expect.any(String),
 							id: expect.any(String)

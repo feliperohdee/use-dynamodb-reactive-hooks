@@ -680,6 +680,7 @@ class Scheduler {
 						try {
 							await this.db.client.send(
 								new UpdateCommand({
+									ConditionExpression: '#status = :pending',
 									ExpressionAttributeNames: {
 										'#status': 'status'
 									},
@@ -687,7 +688,6 @@ class Scheduler {
 										':pending': 'PENDING',
 										':suspended': 'SUSPENDED'
 									},
-									ConditionExpression: '#status = :pending',
 									Key: {
 										namespace: item.namespace,
 										id: item.id
