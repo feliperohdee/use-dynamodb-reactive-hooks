@@ -637,25 +637,91 @@ describe('/index.ts', () => {
 		});
 
 		it('should create task', async () => {
-			const task = createTestTask();
-			const res = await scheduler.register(task);
+			const res = await scheduler.register({
+				namespace: 'spec',
+				schedule: new Date().toISOString(),
+				url: 'https://httpbin.org/anything'
+			});
 
-			expect(scheduler.db.put).toHaveBeenCalledWith(
-				expect.objectContaining({
-					...task,
-					__createdAt: expect.any(String),
-					__updatedAt: expect.any(String),
-					id: expect.any(String)
-				})
-			);
-			expect(res).toEqual(
-				expect.objectContaining({
-					...task,
-					__createdAt: res.__createdAt,
-					__updatedAt: res.__updatedAt,
-					id: res.id
-				})
-			);
+			expect(scheduler.db.put).toHaveBeenCalledWith({
+				__createdAt: expect.any(String),
+				__updatedAt: expect.any(String),
+				body: null,
+				errors: [],
+				headers: {},
+				id: expect.any(String),
+				method: 'GET',
+				namespace: 'spec',
+				repeat: {
+					count: 0,
+					enabled: false,
+					parent: '',
+					rule: {
+						interval: 1,
+						max: 0,
+						unit: 'minutes'
+					}
+				},
+				response: {
+					body: '',
+					headers: {},
+					status: 0
+				},
+				retries: {
+					count: 0,
+					last: null,
+					max: 3
+				},
+				schedule: expect.any(String),
+				status: 'PENDING',
+				url: 'https://httpbin.org/anything'
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__updatedAt: expect.any(String),
+				body: null,
+				errors: [],
+				headers: {},
+				id: expect.any(String),
+				method: 'GET',
+				namespace: 'spec',
+				repeat: {
+					count: 0,
+					enabled: false,
+					parent: '',
+					rule: {
+						interval: 1,
+						max: 0,
+						unit: 'minutes'
+					}
+				},
+				response: {
+					body: '',
+					headers: {},
+					status: 0
+				},
+				retries: {
+					count: 0,
+					last: null,
+					max: 3
+				},
+				schedule: expect.any(String),
+				status: 'PENDING',
+				url: 'https://httpbin.org/anything'
+			});
+		});
+
+		it('should create task with idPrefix', async () => {
+			scheduler.idPrefix = 'test-';
+
+			const res = await scheduler.register({
+				namespace: 'spec',
+				schedule: new Date().toISOString(),
+				url: 'https://httpbin.org/anything'
+			});
+
+			expect(res.id).toMatch(/^test-/);
 		});
 	});
 
@@ -687,7 +753,11 @@ describe('/index.ts', () => {
 					headers: { 'content-type': 'application/json' },
 					status: 200
 				},
-				retries: 2,
+				retries: {
+					count: 2,
+					last: new Date().toISOString(),
+					max: 3
+				},
 				status: 'COMPLETED'
 			};
 
@@ -708,7 +778,6 @@ describe('/index.ts', () => {
 				headers: task.headers,
 				errors: [],
 				id: `${task.id}__1`,
-				maxRetries: task.maxRetries,
 				method: task.method,
 				namespace: task.namespace,
 				repeat: {
@@ -722,7 +791,11 @@ describe('/index.ts', () => {
 					headers: {},
 					status: 0
 				},
-				retries: 0,
+				retries: {
+					count: 0,
+					last: null,
+					max: 3
+				},
 				schedule: expect.any(String),
 				status: 'PENDING',
 				url: task.url
@@ -1276,7 +1349,11 @@ describe('/index.ts', () => {
 			});
 
 			expect(updatedTask!.errors).toHaveLength(1);
-			expect(updatedTask!.retries).toEqual(1);
+			expect(updatedTask!.retries).toEqual({
+				count: 1,
+				last: expect.any(String),
+				max: 3
+			});
 			expect(updatedTask!.status).toEqual('PENDING');
 
 			expect(scheduler.registerNextRepetition).not.toHaveBeenCalled();
@@ -1285,7 +1362,7 @@ describe('/index.ts', () => {
 		it('should mark task as failed after max retries', async () => {
 			const task = await scheduler.register({
 				...createTestTask(),
-				maxRetries: 0,
+				retries: { max: 0 },
 				url: 'https://invalid-url-that-will-fail.com'
 			});
 

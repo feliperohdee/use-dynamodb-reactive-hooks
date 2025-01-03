@@ -37,7 +37,6 @@ const schedulerTask = z.object({
 	errors: z.array(z.string()),
 	headers: z.record(z.string()),
 	id: z.string().uuid(),
-	maxRetries: z.number().default(3),
 	method: schedulerTaskMethod.default('GET'),
 	namespace: z.string(),
 	repeat: z.object({
@@ -51,7 +50,11 @@ const schedulerTask = z.object({
 		headers: z.record(z.string()),
 		status: z.number()
 	}),
-	retries: z.number(),
+	retries: z.object({
+		count: z.number(),
+		last: z.string().datetime().nullable(),
+		max: z.number().default(3)
+	}),
 	schedule: z.string().datetime(),
 	status: schedulerTaskStatus.default('PENDING'),
 	url: z.string().url()
@@ -68,11 +71,18 @@ const schedulerTaskInput = schedulerTask
 		status: true
 	})
 	.extend({
+		body: schedulerTask.shape.body.optional(),
 		headers: schedulerTask.shape.headers.optional(),
 		repeat: schedulerTask.shape.repeat
 			.omit({
 				count: true,
 				parent: true
+			})
+			.optional(),
+		retries: schedulerTask.shape.retries
+			.omit({
+				count: true,
+				last: true
 			})
 			.optional()
 	});
@@ -145,7 +155,7 @@ namespace Scheduler {
 	export type FetchInput = z.input<typeof schedulerFetchInput>;
 	export type GetInput = z.input<typeof schedulerGetInput>;
 	export type Task = z.infer<typeof schedulerTask>;
-	export type TaskInput = z.infer<typeof schedulerTaskInput>;
+	export type TaskInput = z.input<typeof schedulerTaskInput>;
 	export type TaskMethod = z.infer<typeof schedulerTaskMethod>;
 	export type TaskRepeatRule = z.infer<typeof schedulerTaskRepeatRule>;
 	export type TaskStatus = z.infer<typeof schedulerTaskStatus>;
@@ -421,7 +431,11 @@ class Scheduler {
 				headers: {},
 				status: 0
 			},
-			retries: 0,
+			retries: {
+				count: 0,
+				last: null,
+				max: task.retries?.max || 3
+			},
 			schedule: this.calculateNextSchedule(date, task.repeat.rule),
 			status: 'PENDING',
 			url: task.url
@@ -665,10 +679,10 @@ class Scheduler {
 
 								errors++;
 
-								const newRetries = (task.retries || 0) + 1;
+								const newRetriesCount = task.retries.count + 1;
 								const errorMessage = err instanceof Error ? err.message : 'Unknown error';
 
-								if (newRetries <= task.maxRetries) {
+								if (newRetriesCount <= task.retries.max) {
 									await this.db.update({
 										attributeNames: {
 											'#errors': 'errors',
@@ -678,7 +692,11 @@ class Scheduler {
 										attributeValues: {
 											':errors': [errorMessage],
 											':list': [],
-											':retries': newRetries,
+											':retries': {
+												count: newRetriesCount,
+												last: new Date().toISOString(),
+												max: task.retries.max
+											},
 											':pending': 'PENDING'
 										},
 										filter: {

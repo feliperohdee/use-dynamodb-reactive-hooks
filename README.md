@@ -167,7 +167,6 @@ type Webhook = {
 	// Optional fields
 	headers?: Record<string, string>;
 	body?: unknown;
-	maxRetries?: number; // default: 3
 
 	// Recurring webhook configuration
 	repeat?: {
@@ -182,7 +181,11 @@ type Webhook = {
 	// System-managed fields
 	id: string;
 	status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'SUSPENDED';
-	retries: number;
+	retries: {
+		count: number;
+		last: string | null;
+		max: number; // default: 3
+	};
 	errors: string[];
 	response?: {
 		body: string;
