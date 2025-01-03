@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import qs from 'use-qs';
 
 import Scheduler, { taskShape } from './index';
 
@@ -100,7 +101,7 @@ describe('/index.ts', () => {
 		await scheduler.clear('spec');
 	});
 
-	describe('$calculateNextSchedule', () => {
+	describe('calculateNextSchedule', () => {
 		it('should calculates next time by minutes', () => {
 			const currentTime = '2024-03-18T10:00:00.000Z';
 			const rule: Scheduler.TaskRepeatRule = {
@@ -109,7 +110,7 @@ describe('/index.ts', () => {
 				unit: 'minutes'
 			};
 
-			const res = scheduler.$calculateNextSchedule(currentTime, rule);
+			const res = scheduler.calculateNextSchedule(currentTime, rule);
 
 			expect(res).toEqual(new Date('2024-03-18T10:30:00.000Z').toISOString());
 		});
@@ -122,7 +123,7 @@ describe('/index.ts', () => {
 				unit: 'hours'
 			};
 
-			const res = scheduler.$calculateNextSchedule(currentTime, rule);
+			const res = scheduler.calculateNextSchedule(currentTime, rule);
 
 			expect(res).toEqual(new Date('2024-03-18T12:00:00.000Z').toISOString());
 		});
@@ -135,7 +136,7 @@ describe('/index.ts', () => {
 				unit: 'days'
 			};
 
-			const res = scheduler.$calculateNextSchedule(currentTime, rule);
+			const res = scheduler.calculateNextSchedule(currentTime, rule);
 
 			expect(res).toEqual(new Date('2024-03-19T10:00:00.000Z').toISOString());
 		});
@@ -148,7 +149,7 @@ describe('/index.ts', () => {
 				unit: 'hours'
 			};
 
-			const res = scheduler.$calculateNextSchedule(currentTime, rule);
+			const res = scheduler.calculateNextSchedule(currentTime, rule);
 
 			expect(res).toEqual(new Date('2024-03-18T11:30:00.000Z').toISOString());
 		});
@@ -158,7 +159,7 @@ describe('/index.ts', () => {
 		it('should clear namespace', async () => {
 			await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return scheduler.schedule(task);
+					return scheduler.register(task);
 				})
 			);
 
@@ -178,7 +179,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should delete', async () => {
-			const task = await scheduler.schedule(createTestTask());
+			const task = await scheduler.register(createTestTask());
 
 			const deleted = await scheduler.delete({
 				id: task.id,
@@ -217,7 +218,7 @@ describe('/index.ts', () => {
 		it('should delete many', async () => {
 			await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return scheduler.schedule(task);
+					return scheduler.register(task);
 				})
 			);
 
@@ -258,7 +259,7 @@ describe('/index.ts', () => {
 		beforeAll(async () => {
 			tasks = await Promise.all(
 				_.map([createTestTask(), createTestTask(2000), createTestTask(3000)], task => {
-					return scheduler.schedule(task);
+					return scheduler.register(task);
 				})
 			);
 		});
@@ -592,7 +593,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get', async () => {
-			const task = await scheduler.schedule(createTestTask());
+			const task = await scheduler.register(createTestTask());
 			const retrieved = await scheduler.get({
 				id: task.id,
 				namespace: task.namespace
@@ -611,363 +612,7 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('process', () => {
-		beforeEach(() => {
-			vi.spyOn(scheduler.db, 'query');
-			vi.spyOn(scheduler.db, 'update');
-			vi.spyOn(scheduler, 'scheduleNextRepetition');
-		});
-
-		afterEach(async () => {
-			vi.mocked(global.fetch).mockClear();
-			await scheduler.clear('spec');
-		});
-
-		it('should process', async () => {
-			const task = await scheduler.schedule(createTestTask());
-
-			await wait(1100);
-			const res = await scheduler.process();
-
-			expect(res).toEqual({
-				processed: 1,
-				errors: 0
-			});
-
-			expect(scheduler.db.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#schedule': 'schedule',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':now': expect.any(String),
-					':pending': 'PENDING'
-				},
-				chunkLimit: 100,
-				index: 'status__schedule',
-				onChunk: expect.any(Function),
-				queryExpression: '#status = :pending AND #schedule <= :now'
-			});
-
-			expect(global.fetch).toHaveBeenCalledWith(task.url, {
-				body: JSON.stringify(task.body),
-				headers: task.headers,
-				method: task.method
-			});
-
-			expect(scheduler.db.update).toHaveBeenCalledTimes(2);
-			expect(scheduler.db.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#status': 'status'
-				},
-				attributeValues: {
-					':pending': 'PENDING',
-					':processing': 'PROCESSING'
-				},
-				conditionExpression: '#status = :pending',
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #status = :processing'
-			});
-
-			expect(scheduler.db.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#response': 'response',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':response': expect.any(Object),
-					':completed': 'COMPLETED',
-					':processing': 'PROCESSING'
-				},
-				conditionExpression: '#status = :processing',
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #response = :response, #status = :completed'
-			});
-
-			expect(scheduler.scheduleNextRepetition).toHaveBeenCalledOnce();
-		});
-
-		it('should process with GMT', async () => {
-			const now = new Date();
-			const nowLocalString =
-				now
-					.toLocaleString('sv', {
-						timeZone: 'America/Sao_Paulo'
-					})
-					.replace(' ', 'T') + '-03:00';
-
-			const task = await scheduler.schedule({
-				...createTestTask(),
-				schedule: new Date(nowLocalString).toISOString()
-			});
-
-			const res = await scheduler.process();
-
-			expect(res).toEqual({
-				processed: 1,
-				errors: 0
-			});
-
-			expect(global.fetch).toHaveBeenCalledWith(task.url, {
-				body: JSON.stringify(task.body),
-				headers: task.headers,
-				method: task.method
-			});
-		});
-
-		it('should handle concurrent tasks', async () => {
-			const tasks = await Promise.all(
-				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return scheduler.schedule(task);
-				})
-			);
-			await wait(1100);
-
-			const res = await scheduler.process();
-
-			expect(res).toEqual({
-				processed: 3,
-				errors: 0
-			});
-
-			expect(global.fetch).toHaveBeenCalledTimes(3);
-			_.forEach(tasks, task => {
-				expect(global.fetch).toHaveBeenCalledWith(task.url, {
-					body: JSON.stringify(task.body),
-					headers: task.headers,
-					method: task.method
-				});
-			});
-
-			expect(scheduler.scheduleNextRepetition).toHaveBeenCalledTimes(3);
-		});
-
-		it('should retry failed tasks', async () => {
-			const task = await scheduler.schedule({
-				...createTestTask(),
-				url: 'https://invalid-url-that-will-fail.com'
-			});
-
-			await wait(1100);
-			await scheduler.process();
-
-			const updatedTask = await scheduler.get({
-				id: task.id,
-				namespace: task.namespace
-			});
-
-			expect(updatedTask!.errors).toHaveLength(1);
-			expect(updatedTask!.retries).toEqual(1);
-			expect(updatedTask!.status).toEqual('PENDING');
-
-			expect(scheduler.scheduleNextRepetition).not.toHaveBeenCalled();
-		});
-
-		it('should mark task as failed after max retries', async () => {
-			const task = await scheduler.schedule({
-				...createTestTask(),
-				maxRetries: 0,
-				url: 'https://invalid-url-that-will-fail.com'
-			});
-
-			await wait(1100);
-			await scheduler.process();
-
-			const updatedTask = await scheduler.get({
-				id: task.id,
-				namespace: task.namespace
-			});
-
-			expect(updatedTask!.status).toEqual('FAILED');
-			expect(updatedTask!.errors).toHaveLength(1);
-
-			expect(scheduler.scheduleNextRepetition).not.toHaveBeenCalled();
-		});
-
-		it('should handle ConditionalCheckFailedException', async () => {
-			vi.spyOn(scheduler.db, 'update').mockImplementationOnce(() => {
-				throw new ConditionalCheckFailedException({
-					$metadata: {},
-					message: 'ConditionalCheckFailedException'
-				});
-			});
-
-			const task = await scheduler.schedule(createTestTask());
-
-			await wait(1100);
-
-			const res = await scheduler.process();
-			const updatedTask = await scheduler.get({
-				id: task.id,
-				namespace: task.namespace
-			});
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(scheduler.db.update).toHaveBeenCalledOnce();
-			expect(updatedTask!.status).toEqual('PENDING');
-			expect(scheduler.scheduleNextRepetition).not.toHaveBeenCalled();
-		});
-
-		it('should not process suspended tasks', async () => {
-			const task = await scheduler.schedule(createTestTask());
-			await scheduler.suspend({
-				id: task.id,
-				namespace: task.namespace
-			});
-
-			await wait(1100);
-			const res = await scheduler.process();
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(global.fetch).not.toHaveBeenCalled();
-		});
-
-		it('should ignore suspended tasks during processing', async () => {
-			const tasks = await Promise.all(
-				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return scheduler.schedule(task);
-				})
-			);
-
-			// Suspend one task
-			await scheduler.suspend({
-				id: tasks[1].id,
-				namespace: tasks[1].namespace
-			});
-
-			await wait(1100);
-			const res = await scheduler.process();
-
-			expect(res).toEqual({
-				processed: 2,
-				errors: 0
-			});
-
-			expect(global.fetch).toHaveBeenCalledTimes(2);
-
-			// Verify suspended task wasn't processed
-			const suspendedTask = await scheduler.get({
-				id: tasks[1].id,
-				namespace: tasks[1].namespace
-			});
-			expect(suspendedTask?.status).toBe('SUSPENDED');
-		});
-	});
-
-	describe('processDryrun', () => {
-		beforeAll(async () => {
-			await Promise.all(
-				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return scheduler.schedule(task);
-				})
-			);
-
-			await wait(1100);
-		});
-
-		beforeEach(() => {
-			vi.spyOn(scheduler.db, 'query');
-		});
-
-		afterAll(async () => {
-			await scheduler.clear('spec');
-		});
-
-		it('should process dry run', async () => {
-			const res = await scheduler.processDryrun();
-
-			expect(scheduler.db.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#schedule': 'schedule',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':date': expect.any(String),
-					':pending': 'PENDING'
-				},
-				index: 'status__schedule',
-				filterExpression: '',
-				limit: 100,
-				queryExpression: '#status = :pending AND #schedule <= :date'
-			});
-
-			expect(res.count).toEqual(3);
-		});
-
-		it('should process dry run by [namespace]', async () => {
-			const res = await scheduler.processDryrun({ namespace: 'spec' });
-
-			expect(scheduler.db.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#namespace': 'namespace',
-					'#schedule': 'schedule',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':date': expect.any(String),
-					':namespace': 'spec',
-					':pending': 'PENDING'
-				},
-				index: 'status__schedule',
-				filterExpression: '#namespace = :namespace',
-				limit: 100,
-				queryExpression: '#status = :pending AND #schedule <= :date'
-			});
-
-			expect(res.count).toEqual(3);
-		});
-
-		it('should process dry run by [namespace, id, date] with limit', async () => {
-			const date = new Date('2024-03-18T10:00:00.000Z').toISOString();
-			const res = await scheduler.processDryrun({
-				date,
-				id: 'id',
-				limit: 500,
-				namespace: 'spec'
-			});
-
-			expect(scheduler.db.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#id': 'id',
-					'#namespace': 'namespace',
-					'#schedule': 'schedule',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':date': date,
-					':id': 'id',
-					':namespace': 'spec',
-					':pending': 'PENDING'
-				},
-				index: 'status__schedule',
-				filterExpression: '#namespace = :namespace AND begins_with(#id, :id)',
-				limit: 500,
-				queryExpression: '#status = :pending AND #schedule <= :date'
-			});
-
-			expect(res.count).toEqual(0);
-		});
-	});
-
-	describe('schedule', () => {
+	describe('register', () => {
 		beforeEach(() => {
 			vi.spyOn(scheduler.db, 'put');
 		});
@@ -982,7 +627,7 @@ describe('/index.ts', () => {
 			};
 
 			try {
-				await scheduler.schedule(invalidInput as any);
+				await scheduler.register(invalidInput as any);
 
 				throw new Error('Expected to throw');
 			} catch (err) {
@@ -993,7 +638,7 @@ describe('/index.ts', () => {
 
 		it('should create task', async () => {
 			const task = createTestTask();
-			const res = await scheduler.schedule(task);
+			const res = await scheduler.register(task);
 
 			expect(scheduler.db.put).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1014,7 +659,7 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('scheduleNextRepetition', () => {
+	describe('registerNextRepetition', () => {
 		beforeEach(() => {
 			vi.spyOn(scheduler.db, 'put');
 		});
@@ -1049,7 +694,7 @@ describe('/index.ts', () => {
 			// ensure different __createdAt
 			await wait(100);
 
-			const nextTask = await scheduler.scheduleNextRepetition(task);
+			const nextTask = await scheduler.registerNextRepetition(task);
 
 			expect(new Date(nextTask!.__createdAt).getTime()).toBeGreaterThan(new Date(task.__createdAt).getTime());
 			expect(new Date(nextTask!.__updatedAt).getTime()).toBeGreaterThan(new Date(task.__updatedAt).getTime());
@@ -1099,7 +744,7 @@ describe('/index.ts', () => {
 				}
 			};
 
-			const nextTask = await scheduler.scheduleNextRepetition(task);
+			const nextTask = await scheduler.registerNextRepetition(task);
 
 			expect(nextTask).toBeUndefined();
 			expect(scheduler.db.put).not.toHaveBeenCalled();
@@ -1120,7 +765,7 @@ describe('/index.ts', () => {
 				}
 			};
 
-			const nextTask = await scheduler.scheduleNextRepetition(task);
+			const nextTask = await scheduler.registerNextRepetition(task);
 
 			expect(nextTask).toBeUndefined();
 			expect(scheduler.db.put).not.toHaveBeenCalled();
@@ -1141,7 +786,7 @@ describe('/index.ts', () => {
 				}
 			};
 
-			await scheduler.scheduleNextRepetition(task);
+			await scheduler.registerNextRepetition(task);
 
 			expect(scheduler.db.put).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1163,7 +808,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should suspend a pending task', async () => {
-			const task = await scheduler.schedule(createTestTask());
+			const task = await scheduler.register(createTestTask());
 
 			const suspended = await scheduler.suspend({
 				id: task.id,
@@ -1190,7 +835,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should not suspend a non-pending task', async () => {
-			const task = await scheduler.schedule(createTestTask());
+			const task = await scheduler.register(createTestTask());
 
 			// First suspend succeeds
 			await scheduler.suspend({
@@ -1231,7 +876,7 @@ describe('/index.ts', () => {
 		it('should suspend many tasks', async () => {
 			const tasks = await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return scheduler.schedule(task);
+					return scheduler.register(task);
 				})
 			);
 
@@ -1310,23 +955,7 @@ describe('/index.ts', () => {
 				const res = scheduler.taskFetchRequest(task);
 
 				expect(res.body).toBeNull();
-				expect(res.headers).toEqual({ a: '1' });
-				expect(res.method).toEqual('GET');
-				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
-			});
-
-			it('should returns merging qs', () => {
-				const task = createTestTask(1000, {
-					body: { b: 2 },
-					headers: { a: '1' },
-					method: 'GET',
-					url: 'https://httpbin.org/anything?a=1&b=1'
-				});
-
-				const res = scheduler.taskFetchRequest(task);
-
-				expect(res.body).toBeNull();
-				expect(res.headers).toEqual({ a: '1' });
+				expect(Object.fromEntries(res.headers.entries())).toEqual({ a: '1' });
 				expect(res.method).toEqual('GET');
 				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
 			});
@@ -1341,14 +970,14 @@ describe('/index.ts', () => {
 				const res = scheduler.taskFetchRequest(task);
 
 				expect(res.body).toBeNull();
-				expect(res.headers).toEqual({ a: '1' });
+				expect(Object.fromEntries(res.headers.entries())).toEqual({ a: '1' });
 				expect(res.method).toEqual('GET');
 				expect(res.url).toEqual('https://httpbin.org/anything');
 			});
 		});
 
 		describe('POST', () => {
-			it('should returns with body', () => {
+			it('should returns', () => {
 				const task = createTestTask(1000, {
 					body: { a: 1, b: 2 },
 					headers: { a: '1' },
@@ -1358,8 +987,44 @@ describe('/index.ts', () => {
 
 				const res = scheduler.taskFetchRequest(task);
 
-				expect(res.body).toEqual({ a: 1, b: 2 });
-				expect(res.headers).toEqual({ a: '1' });
+				expect(res.body).toEqual(JSON.stringify({ a: 1, b: 2 }));
+				expect(Object.fromEntries(res.headers.entries())).toEqual({ a: '1' });
+				expect(res.method).toEqual('POST');
+				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
+			});
+
+			it('should returns with application/x-www-form-urlencoded', () => {
+				const task = createTestTask(1000, {
+					body: { a: 1, b: 2 },
+					headers: { 'content-type': 'application/x-www-form-urlencoded' },
+					method: 'POST',
+					url: 'https://httpbin.org/anything?a=1&b=2'
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				expect(res.body).toEqual(qs.stringify({ a: 1, b: 2 }, { addQueryPrefix: false }));
+				expect(Object.fromEntries(res.headers.entries())).toEqual({ 'content-type': 'application/x-www-form-urlencoded' });
+				expect(res.method).toEqual('POST');
+				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
+			});
+
+			it('should returns with multipart/form-data', () => {
+				const task = createTestTask(1000, {
+					body: { a: 1, b: 2 },
+					headers: { 'content-type': 'multipart/form-data' },
+					method: 'POST',
+					url: 'https://httpbin.org/anything?a=1&b=2'
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				const formData = new FormData();
+				formData.append('a', '1');
+				formData.append('b', '2');
+
+				expect(res.body).toEqual(formData);
+				expect(Object.fromEntries(res.headers.entries())).toEqual({ 'content-type': 'multipart/form-data' });
 				expect(res.method).toEqual('POST');
 				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
 			});
@@ -1373,10 +1038,441 @@ describe('/index.ts', () => {
 				const res = scheduler.taskFetchRequest(task);
 
 				expect(res.body).toBeNull();
-				expect(res.headers).toEqual({ a: '1' });
+				expect(Object.fromEntries(res.headers.entries())).toEqual({ a: '1' });
 				expect(res.method).toEqual('POST');
 				expect(res.url).toEqual('https://httpbin.org/anything');
 			});
+		});
+	});
+
+	describe('process', () => {
+		beforeEach(() => {
+			vi.spyOn(scheduler.db, 'query');
+			vi.spyOn(scheduler.db, 'update');
+			vi.spyOn(scheduler, 'registerNextRepetition');
+		});
+
+		afterEach(async () => {
+			vi.mocked(global.fetch).mockClear();
+			await scheduler.clear('spec');
+		});
+
+		it('should process', async () => {
+			const task = await scheduler.register(createTestTask());
+
+			await wait(1100);
+			const res = await scheduler.trigger();
+
+			expect(res).toEqual({
+				processed: 1,
+				errors: 0
+			});
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#schedule': 'schedule',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':now': expect.any(String),
+					':pending': 'PENDING'
+				},
+				chunkLimit: 100,
+				index: 'status__schedule',
+				onChunk: expect.any(Function),
+				queryExpression: '#status = :pending AND #schedule <= :now'
+			});
+
+			expect(global.fetch).toHaveBeenCalledWith(task.url, {
+				headers: new Headers(task.headers),
+				method: task.method
+			});
+
+			expect(scheduler.db.update).toHaveBeenCalledTimes(2);
+			expect(scheduler.db.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#status': 'status'
+				},
+				attributeValues: {
+					':pending': 'PENDING',
+					':processing': 'PROCESSING'
+				},
+				conditionExpression: '#status = :pending',
+				filter: {
+					item: {
+						namespace: task.namespace,
+						id: task.id
+					}
+				},
+				updateExpression: 'SET #status = :processing'
+			});
+
+			expect(scheduler.db.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#response': 'response',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':response': expect.any(Object),
+					':completed': 'COMPLETED',
+					':processing': 'PROCESSING'
+				},
+				conditionExpression: '#status = :processing',
+				filter: {
+					item: {
+						namespace: task.namespace,
+						id: task.id
+					}
+				},
+				updateExpression: 'SET #response = :response, #status = :completed'
+			});
+
+			expect(scheduler.registerNextRepetition).toHaveBeenCalledOnce();
+		});
+
+		it('should process with body', async () => {
+			const task = await scheduler.register(
+				createTestTask(1000, {
+					body: { a: 1 }
+				})
+			);
+
+			await wait(1100);
+			const res = await scheduler.trigger();
+
+			expect(res).toEqual({
+				processed: 1,
+				errors: 0
+			});
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#schedule': 'schedule',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':now': expect.any(String),
+					':pending': 'PENDING'
+				},
+				chunkLimit: 100,
+				index: 'status__schedule',
+				onChunk: expect.any(Function),
+				queryExpression: '#status = :pending AND #schedule <= :now'
+			});
+
+			expect(global.fetch).toHaveBeenCalledWith(task.url, {
+				body: JSON.stringify(task.body),
+				headers: new Headers(task.headers),
+				method: task.method
+			});
+
+			expect(scheduler.db.update).toHaveBeenCalledTimes(2);
+			expect(scheduler.db.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#status': 'status'
+				},
+				attributeValues: {
+					':pending': 'PENDING',
+					':processing': 'PROCESSING'
+				},
+				conditionExpression: '#status = :pending',
+				filter: {
+					item: {
+						namespace: task.namespace,
+						id: task.id
+					}
+				},
+				updateExpression: 'SET #status = :processing'
+			});
+
+			expect(scheduler.db.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#response': 'response',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':response': expect.any(Object),
+					':completed': 'COMPLETED',
+					':processing': 'PROCESSING'
+				},
+				conditionExpression: '#status = :processing',
+				filter: {
+					item: {
+						namespace: task.namespace,
+						id: task.id
+					}
+				},
+				updateExpression: 'SET #response = :response, #status = :completed'
+			});
+
+			expect(scheduler.registerNextRepetition).toHaveBeenCalledOnce();
+		});
+
+		it('should process with GMT', async () => {
+			const now = new Date();
+			const nowLocalString =
+				now
+					.toLocaleString('sv', {
+						timeZone: 'America/Sao_Paulo'
+					})
+					.replace(' ', 'T') + '-03:00';
+
+			const task = await scheduler.register({
+				...createTestTask(),
+				schedule: new Date(nowLocalString).toISOString()
+			});
+
+			const res = await scheduler.trigger();
+
+			expect(res).toEqual({
+				processed: 1,
+				errors: 0
+			});
+
+			expect(global.fetch).toHaveBeenCalledWith(task.url, {
+				headers: new Headers(task.headers),
+				method: task.method
+			});
+		});
+
+		it('should handle concurrent tasks', async () => {
+			const tasks = await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
+					return scheduler.register(task);
+				})
+			);
+			await wait(1100);
+
+			const res = await scheduler.trigger();
+
+			expect(res).toEqual({
+				processed: 3,
+				errors: 0
+			});
+
+			expect(global.fetch).toHaveBeenCalledTimes(3);
+			_.forEach(tasks, task => {
+				expect(global.fetch).toHaveBeenCalledWith(task.url, {
+					headers: new Headers(task.headers),
+					method: task.method
+				});
+			});
+
+			expect(scheduler.registerNextRepetition).toHaveBeenCalledTimes(3);
+		});
+
+		it('should retry failed tasks', async () => {
+			const task = await scheduler.register({
+				...createTestTask(),
+				url: 'https://invalid-url-that-will-fail.com'
+			});
+
+			await wait(1100);
+			await scheduler.trigger();
+
+			const updatedTask = await scheduler.get({
+				id: task.id,
+				namespace: task.namespace
+			});
+
+			expect(updatedTask!.errors).toHaveLength(1);
+			expect(updatedTask!.retries).toEqual(1);
+			expect(updatedTask!.status).toEqual('PENDING');
+
+			expect(scheduler.registerNextRepetition).not.toHaveBeenCalled();
+		});
+
+		it('should mark task as failed after max retries', async () => {
+			const task = await scheduler.register({
+				...createTestTask(),
+				maxRetries: 0,
+				url: 'https://invalid-url-that-will-fail.com'
+			});
+
+			await wait(1100);
+			await scheduler.trigger();
+
+			const updatedTask = await scheduler.get({
+				id: task.id,
+				namespace: task.namespace
+			});
+
+			expect(updatedTask!.status).toEqual('FAILED');
+			expect(updatedTask!.errors).toHaveLength(1);
+
+			expect(scheduler.registerNextRepetition).not.toHaveBeenCalled();
+		});
+
+		it('should handle ConditionalCheckFailedException', async () => {
+			vi.spyOn(scheduler.db, 'update').mockImplementationOnce(() => {
+				throw new ConditionalCheckFailedException({
+					$metadata: {},
+					message: 'ConditionalCheckFailedException'
+				});
+			});
+
+			const task = await scheduler.register(createTestTask());
+
+			await wait(1100);
+
+			const res = await scheduler.trigger();
+			const updatedTask = await scheduler.get({
+				id: task.id,
+				namespace: task.namespace
+			});
+
+			expect(res).toEqual({
+				processed: 0,
+				errors: 0
+			});
+
+			expect(scheduler.db.update).toHaveBeenCalledOnce();
+			expect(updatedTask!.status).toEqual('PENDING');
+			expect(scheduler.registerNextRepetition).not.toHaveBeenCalled();
+		});
+
+		it('should not process suspended tasks', async () => {
+			const task = await scheduler.register(createTestTask());
+			await scheduler.suspend({
+				id: task.id,
+				namespace: task.namespace
+			});
+
+			await wait(1100);
+			const res = await scheduler.trigger();
+
+			expect(res).toEqual({
+				processed: 0,
+				errors: 0
+			});
+
+			expect(global.fetch).not.toHaveBeenCalled();
+		});
+
+		it('should ignore suspended tasks during processing', async () => {
+			const tasks = await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
+					return scheduler.register(task);
+				})
+			);
+
+			// Suspend one task
+			await scheduler.suspend({
+				id: tasks[1].id,
+				namespace: tasks[1].namespace
+			});
+
+			await wait(1100);
+			const res = await scheduler.trigger();
+
+			expect(res).toEqual({
+				processed: 2,
+				errors: 0
+			});
+
+			expect(global.fetch).toHaveBeenCalledTimes(2);
+
+			// Verify suspended task wasn't processed
+			const suspendedTask = await scheduler.get({
+				id: tasks[1].id,
+				namespace: tasks[1].namespace
+			});
+			expect(suspendedTask?.status).toBe('SUSPENDED');
+		});
+	});
+
+	describe('triggerDryrun', () => {
+		beforeAll(async () => {
+			await Promise.all(
+				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
+					return scheduler.register(task);
+				})
+			);
+
+			await wait(1100);
+		});
+
+		beforeEach(() => {
+			vi.spyOn(scheduler.db, 'query');
+		});
+
+		afterAll(async () => {
+			await scheduler.clear('spec');
+		});
+
+		it('should process dry run', async () => {
+			const res = await scheduler.triggerDryrun();
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#schedule': 'schedule',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':date': expect.any(String),
+					':pending': 'PENDING'
+				},
+				index: 'status__schedule',
+				filterExpression: '',
+				limit: 100,
+				queryExpression: '#status = :pending AND #schedule <= :date'
+			});
+
+			expect(res.count).toEqual(3);
+		});
+
+		it('should process dry run by [namespace]', async () => {
+			const res = await scheduler.triggerDryrun({ namespace: 'spec' });
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#namespace': 'namespace',
+					'#schedule': 'schedule',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':date': expect.any(String),
+					':namespace': 'spec',
+					':pending': 'PENDING'
+				},
+				index: 'status__schedule',
+				filterExpression: '#namespace = :namespace',
+				limit: 100,
+				queryExpression: '#status = :pending AND #schedule <= :date'
+			});
+
+			expect(res.count).toEqual(3);
+		});
+
+		it('should process dry run by [namespace, id, date] with limit', async () => {
+			const date = new Date('2024-03-18T10:00:00.000Z').toISOString();
+			const res = await scheduler.triggerDryrun({
+				date,
+				id: 'id',
+				limit: 500,
+				namespace: 'spec'
+			});
+
+			expect(scheduler.db.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#id': 'id',
+					'#namespace': 'namespace',
+					'#schedule': 'schedule',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':date': date,
+					':id': 'id',
+					':namespace': 'spec',
+					':pending': 'PENDING'
+				},
+				index: 'status__schedule',
+				filterExpression: '#namespace = :namespace AND begins_with(#id, :id)',
+				limit: 500,
+				queryExpression: '#status = :pending AND #schedule <= :date'
+			});
+
+			expect(res.count).toEqual(0);
 		});
 	});
 
@@ -1390,7 +1486,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should unsuspend a suspended task', async () => {
-			const task = await scheduler.schedule(createTestTask());
+			const task = await scheduler.register(createTestTask());
 
 			await scheduler.suspend({
 				id: task.id,
@@ -1422,7 +1518,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should not unsuspend a non-suspended task', async () => {
-			const task = await scheduler.schedule(createTestTask());
+			const task = await scheduler.register(createTestTask());
 
 			// Should fail because task is PENDING, not SUSPENDED
 			await expect(
@@ -1441,6 +1537,21 @@ describe('/index.ts', () => {
 
 			expect(unsuspended).toBeNull();
 			expect(scheduler.db.update).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('uuid', () => {
+		it('should generate a UUID with prefix', () => {
+			scheduler.idPrefix = 'test';
+			const uuid = scheduler.uuid();
+
+			expect(uuid).toMatch(/^test#[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
+		});
+
+		it('should generate a UUID without prefix', () => {
+			const uuid = scheduler.uuid();
+
+			expect(uuid).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
 		});
 	});
 });

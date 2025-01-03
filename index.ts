@@ -12,6 +12,7 @@ const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
 
+const schedulerTaskMethod = z.enum(['DELETE', 'GET', 'HEAD', 'POST', 'PUT']);
 const schedulerTaskStatus = z.enum(['COMPLETED', 'FAILED', 'SUSPENDED', 'PENDING', 'PROCESSING']);
 const schedulerTaskRepeatRule = z.object({
 	interval: z.number().min(1),
@@ -37,7 +38,7 @@ const schedulerTask = z.object({
 	headers: z.record(z.string()),
 	id: z.string().uuid(),
 	maxRetries: z.number().default(3),
-	method: z.enum(['GET', 'POST', 'PUT']).default('GET'),
+	method: schedulerTaskMethod.default('GET'),
 	namespace: z.string(),
 	repeat: z.object({
 		count: z.number(),
@@ -122,7 +123,7 @@ const schedulerGetInput = z.object({
 	namespace: z.string()
 });
 
-const schedulerProcessDryrunInput = z.object({
+const schedulerTriggerDryrunInput = z.object({
 	date: z.string().datetime({ offset: true }).nullable().optional(),
 	id: z.string().optional(),
 	limit: z.number().min(1).default(100),
@@ -134,6 +135,7 @@ namespace Scheduler {
 		accessKeyId: string;
 		concurrency?: number;
 		createTable?: boolean;
+		idPrefix?: string;
 		region: string;
 		secretAccessKey: string;
 		tableName: string;
@@ -142,11 +144,19 @@ namespace Scheduler {
 	export type DeleteInput = z.input<typeof schedulerDeleteInput>;
 	export type FetchInput = z.input<typeof schedulerFetchInput>;
 	export type GetInput = z.input<typeof schedulerGetInput>;
-	export type ProcessDryrunInput = z.input<typeof schedulerProcessDryrunInput>;
 	export type Task = z.infer<typeof schedulerTask>;
 	export type TaskInput = z.infer<typeof schedulerTaskInput>;
+	export type TaskMethod = z.infer<typeof schedulerTaskMethod>;
 	export type TaskRepeatRule = z.infer<typeof schedulerTaskRepeatRule>;
 	export type TaskStatus = z.infer<typeof schedulerTaskStatus>;
+	export type TriggerDryrunInput = z.input<typeof schedulerTriggerDryrunInput>;
+
+	export type TaskFetchRequestResponse = {
+		body: BodyInit | null;
+		headers: Headers;
+		method: TaskMethod;
+		url: string;
+	};
 }
 
 const taskShape = (task: Partial<Scheduler.Task | Scheduler.TaskInput>): Scheduler.Task => {
@@ -156,6 +166,7 @@ const taskShape = (task: Partial<Scheduler.Task | Scheduler.TaskInput>): Schedul
 class Scheduler {
 	public concurrency: number;
 	public db: Dynamodb<Scheduler.Task>;
+	public idPrefix?: string;
 
 	constructor(options: Scheduler.ConstructorOptions) {
 		const db = new Dynamodb<Scheduler.Task>({
@@ -193,9 +204,10 @@ class Scheduler {
 
 		this.concurrency = options.concurrency || DEFAULT_CONCURRENCY;
 		this.db = db;
+		this.idPrefix = options.idPrefix;
 	}
 
-	$calculateNextSchedule(currentTime: string, rule: Scheduler.TaskRepeatRule): string {
+	calculateNextSchedule(currentTime: string, rule: Scheduler.TaskRepeatRule): string {
 		let current = new Date(currentTime);
 		let intervalMs: number;
 
@@ -371,237 +383,20 @@ class Scheduler {
 		return res ? taskShape(res) : null;
 	}
 
-	async process(): Promise<{ processed: number; errors: number }> {
-		const now = new Date().toISOString();
-
-		let processed = 0;
-		let errors = 0;
-
-		try {
-			await this.db.query({
-				attributeNames: {
-					'#schedule': 'schedule',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':now': now,
-					':pending': 'PENDING'
-				},
-				chunkLimit: 100,
-				index: 'status__schedule',
-				onChunk: async ({ items }) => {
-					let promiseTasks: (() => Promise<void>)[] = [];
-
-					for (const item of items) {
-						const task = taskShape(item);
-						const promiseTask = async () => {
-							try {
-								await this.db.update({
-									attributeNames: {
-										'#status': 'status'
-									},
-									attributeValues: {
-										':pending': 'PENDING',
-										':processing': 'PROCESSING'
-									},
-									// in case of other process already picked the task
-									conditionExpression: '#status = :pending',
-									filter: {
-										item: {
-											namespace: task.namespace,
-											id: task.id
-										}
-									},
-									updateExpression: 'SET #status = :processing'
-								});
-
-								const { body, headers, method, url } = this.taskFetchRequest(task);
-								const res = await fetch(url, {
-									method: method,
-									headers: headers,
-									body: method === 'POST' || method === 'PUT' ? JSON.stringify(body) : undefined
-								});
-
-								if (res.ok) {
-									const taskUpdate = await this.db.update({
-										attributeNames: {
-											'#response': 'response',
-											'#status': 'status'
-										},
-										attributeValues: {
-											':completed': 'COMPLETED',
-											':processing': 'PROCESSING',
-											':response': {
-												body: await res.text(),
-												headers: Object.fromEntries(res.headers.entries()),
-												status: res.status
-											}
-										},
-										conditionExpression: '#status = :processing',
-										filter: {
-											item: {
-												namespace: task.namespace,
-												id: task.id
-											}
-										},
-										updateExpression: 'SET #response = :response, #status = :completed'
-									});
-
-									await this.scheduleNextRepetition(taskUpdate);
-									processed++;
-								} else {
-									throw new Error(`Request failed with status ${res.status}`);
-								}
-							} catch (err) {
-								if (err instanceof ConditionalCheckFailedException) {
-									return;
-								}
-
-								errors++;
-
-								const newRetries = (task.retries || 0) + 1;
-								const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-
-								if (newRetries <= task.maxRetries) {
-									await this.db.update({
-										attributeNames: {
-											'#errors': 'errors',
-											'#retries': 'retries',
-											'#status': 'status'
-										},
-										attributeValues: {
-											':errors': [errorMessage],
-											':list': [],
-											':retries': newRetries,
-											':pending': 'PENDING'
-										},
-										filter: {
-											item: {
-												namespace: task.namespace,
-												id: task.id
-											}
-										},
-										updateExpression:
-											'SET #errors = list_append(if_not_exists(#errors, :list), :errors), #retries = :retries, #status = :pending'
-									});
-								} else {
-									await this.db.update({
-										attributeNames: {
-											'#errors': 'errors',
-											'#status': 'status'
-										},
-										attributeValues: {
-											':errors': [errorMessage],
-											':list': [],
-											':failed': 'FAILED'
-										},
-										filter: {
-											item: {
-												namespace: task.namespace,
-												id: task.id
-											}
-										},
-										updateExpression: 'SET #errors = list_append(if_not_exists(#errors, :list), :errors), #status = :failed'
-									});
-								}
-							}
-						};
-
-						promiseTasks = [...promiseTasks, promiseTask];
-					}
-
-					await promiseAll(promiseTasks, this.concurrency);
-				},
-				queryExpression: '#status = :pending AND #schedule <= :now'
-			});
-		} catch (err) {
-			console.error('Error processing tasks:', err);
-			throw err;
-		}
-
-		return { processed, errors };
-	}
-
-	async processDryrun(args: Scheduler.ProcessDryrunInput = {}): Promise<{
-		count: number;
-		items: { namespace: string; id: string; schedule: string }[];
-	}> {
-		args = await schedulerProcessDryrunInput.parseAsync(args);
-
-		const date = args.date ? new Date(args.date).toISOString() : new Date().toISOString();
-		const queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
-			filterExpression: '',
-			index: 'status__schedule',
-			limit: args.limit,
-			queryExpression: '#status = :pending AND #schedule <= :date'
-		};
-
-		queryOptions.attributeNames = {
-			'#schedule': 'schedule',
-			'#status': 'status'
-		};
-
-		queryOptions.attributeValues = {
-			':date': date,
-			':pending': 'PENDING'
-		};
-
-		if (args.namespace) {
-			queryOptions.attributeNames = {
-				...queryOptions.attributeNames,
-				'#namespace': 'namespace'
-			};
-
-			queryOptions.attributeValues = {
-				...queryOptions.attributeValues,
-				':namespace': args.namespace
-			};
-
-			queryOptions.filterExpression = '#namespace = :namespace';
-		}
-
-		if (args.id) {
-			queryOptions.attributeNames = {
-				...queryOptions.attributeNames,
-				'#id': 'id'
-			};
-
-			queryOptions.attributeValues = {
-				...queryOptions.attributeValues,
-				':id': args.id
-			};
-
-			queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', 'begins_with(#id, :id)');
-		}
-
-		const res = await this.db.query(queryOptions);
-
-		return {
-			count: res.count,
-			items: _.map(res.items, (task: Scheduler.Task) => {
-				return {
-					namespace: task.namespace,
-					id: task.id,
-					schedule: task.schedule
-				};
-			})
-		};
-	}
-
-	async schedule(args: Scheduler.TaskInput): Promise<Scheduler.Task> {
+	async register(args: Scheduler.TaskInput): Promise<Scheduler.Task> {
 		args = await schedulerTaskInput.parseAsync(args);
 
 		const res = await this.db.put(
 			taskShape({
 				...args,
-				id: crypto.randomUUID()
+				id: this.uuid()
 			})
 		);
 
 		return _.omit(res, ['__ts']);
 	}
 
-	async scheduleNextRepetition(task: Scheduler.Task): Promise<Scheduler.Task | void> {
+	async registerNextRepetition(task: Scheduler.Task): Promise<Scheduler.Task | void> {
 		if (!task.repeat?.enabled || task.status === 'FAILED') {
 			return;
 		}
@@ -627,7 +422,7 @@ class Scheduler {
 				status: 0
 			},
 			retries: 0,
-			schedule: this.$calculateNextSchedule(date, task.repeat.rule),
+			schedule: this.calculateNextSchedule(date, task.repeat.rule),
 			status: 'PENDING',
 			url: task.url
 		});
@@ -715,30 +510,287 @@ class Scheduler {
 		};
 	}
 
-	taskFetchRequest(task: Scheduler.Task): {
-		body: Record<string, any> | null;
-		headers: Record<string, string>;
-		method: string;
-		url: string;
-	} {
+	taskFetchRequest(task: Scheduler.Task): Scheduler.TaskFetchRequestResponse {
 		const url = new URL(task.url);
+		const headers = new Headers(task.headers);
 
 		if (task.method === 'POST' || task.method === 'PUT') {
+			if (task.body && _.size(task.body)) {
+				const contentType = headers.get('content-type');
+
+				if (_.includes(contentType, 'application/x-www-form-urlencoded')) {
+					return {
+						body: qs.stringify(task.body, { addQueryPrefix: false }),
+						headers,
+						method: task.method,
+						url: task.url
+					};
+				} else if (_.includes(contentType, 'multipart/form-data')) {
+					const formdata = new FormData();
+
+					_.forEach(task.body, (value, key) => {
+						formdata.append(key, value);
+					});
+
+					return {
+						body: formdata,
+						headers,
+						method: task.method,
+						url: task.url
+					};
+				} else {
+					return {
+						body: JSON.stringify(task.body),
+						headers,
+						method: task.method,
+						url: task.url
+					};
+				}
+			}
+
 			return {
-				body: _.size(task.body) ? task.body : null,
-				headers: task.headers,
+				body: null,
+				headers,
 				method: task.method,
 				url: task.url
 			};
 		}
+
+		const queryString = qs.stringify({
+			...Object.fromEntries(url.searchParams.entries()),
+			...task.body
+		});
+
 		return {
 			body: null,
-			headers: task.headers,
+			headers,
 			method: task.method,
-			url: `${url.protocol}//${url.host}${url.pathname}${qs.stringify({
-				...Object.fromEntries(url.searchParams.entries()),
-				...task.body
-			})}`
+			url: `${url.protocol}//${url.host}${url.pathname}${queryString}`
+		};
+	}
+
+	async trigger(): Promise<{ processed: number; errors: number }> {
+		const now = new Date().toISOString();
+
+		let processed = 0;
+		let errors = 0;
+
+		try {
+			await this.db.query({
+				attributeNames: {
+					'#schedule': 'schedule',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':now': now,
+					':pending': 'PENDING'
+				},
+				chunkLimit: 100,
+				index: 'status__schedule',
+				onChunk: async ({ items }) => {
+					let promiseTasks: (() => Promise<void>)[] = [];
+
+					for (const item of items) {
+						const task = taskShape(item);
+						const promiseTask = async () => {
+							try {
+								await this.db.update({
+									attributeNames: {
+										'#status': 'status'
+									},
+									attributeValues: {
+										':pending': 'PENDING',
+										':processing': 'PROCESSING'
+									},
+									// in case of other process already picked the task
+									conditionExpression: '#status = :pending',
+									filter: {
+										item: {
+											namespace: task.namespace,
+											id: task.id
+										}
+									},
+									updateExpression: 'SET #status = :processing'
+								});
+
+								const { body, headers, method, url } = this.taskFetchRequest(task);
+								const res = await fetch(
+									url,
+									body && (method === 'POST' || method === 'PUT')
+										? {
+												body,
+												headers,
+												method
+											}
+										: {
+												headers,
+												method
+											}
+								);
+
+								if (res.ok) {
+									const taskUpdate = await this.db.update({
+										attributeNames: {
+											'#response': 'response',
+											'#status': 'status'
+										},
+										attributeValues: {
+											':completed': 'COMPLETED',
+											':processing': 'PROCESSING',
+											':response': {
+												body: await res.text(),
+												headers: Object.fromEntries(res.headers.entries()),
+												status: res.status
+											}
+										},
+										conditionExpression: '#status = :processing',
+										filter: {
+											item: {
+												namespace: task.namespace,
+												id: task.id
+											}
+										},
+										updateExpression: 'SET #response = :response, #status = :completed'
+									});
+
+									await this.registerNextRepetition(taskUpdate);
+									processed++;
+								} else {
+									throw new Error(`Request failed with status ${res.status}`);
+								}
+							} catch (err) {
+								if (err instanceof ConditionalCheckFailedException) {
+									return;
+								}
+
+								errors++;
+
+								const newRetries = (task.retries || 0) + 1;
+								const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
+								if (newRetries <= task.maxRetries) {
+									await this.db.update({
+										attributeNames: {
+											'#errors': 'errors',
+											'#retries': 'retries',
+											'#status': 'status'
+										},
+										attributeValues: {
+											':errors': [errorMessage],
+											':list': [],
+											':retries': newRetries,
+											':pending': 'PENDING'
+										},
+										filter: {
+											item: {
+												namespace: task.namespace,
+												id: task.id
+											}
+										},
+										updateExpression:
+											'SET #errors = list_append(if_not_exists(#errors, :list), :errors), #retries = :retries, #status = :pending'
+									});
+								} else {
+									await this.db.update({
+										attributeNames: {
+											'#errors': 'errors',
+											'#status': 'status'
+										},
+										attributeValues: {
+											':errors': [errorMessage],
+											':list': [],
+											':failed': 'FAILED'
+										},
+										filter: {
+											item: {
+												namespace: task.namespace,
+												id: task.id
+											}
+										},
+										updateExpression: 'SET #errors = list_append(if_not_exists(#errors, :list), :errors), #status = :failed'
+									});
+								}
+							}
+						};
+
+						promiseTasks = [...promiseTasks, promiseTask];
+					}
+
+					await promiseAll(promiseTasks, this.concurrency);
+				},
+				queryExpression: '#status = :pending AND #schedule <= :now'
+			});
+		} catch (err) {
+			console.error('Error processing tasks:', err);
+			throw err;
+		}
+
+		return { processed, errors };
+	}
+
+	async triggerDryrun(args: Scheduler.TriggerDryrunInput = {}): Promise<{
+		count: number;
+		items: { namespace: string; id: string; schedule: string }[];
+	}> {
+		args = await schedulerTriggerDryrunInput.parseAsync(args);
+
+		const date = args.date ? new Date(args.date).toISOString() : new Date().toISOString();
+		const queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
+			filterExpression: '',
+			index: 'status__schedule',
+			limit: args.limit,
+			queryExpression: '#status = :pending AND #schedule <= :date'
+		};
+
+		queryOptions.attributeNames = {
+			'#schedule': 'schedule',
+			'#status': 'status'
+		};
+
+		queryOptions.attributeValues = {
+			':date': date,
+			':pending': 'PENDING'
+		};
+
+		if (args.namespace) {
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#namespace': 'namespace'
+			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':namespace': args.namespace
+			};
+
+			queryOptions.filterExpression = '#namespace = :namespace';
+		}
+
+		if (args.id) {
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#id': 'id'
+			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':id': args.id
+			};
+
+			queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', 'begins_with(#id, :id)');
+		}
+
+		const res = await this.db.query(queryOptions);
+
+		return {
+			count: res.count,
+			items: _.map(res.items, (task: Scheduler.Task) => {
+				return {
+					namespace: task.namespace,
+					id: task.id,
+					schedule: task.schedule
+				};
+			})
 		};
 	}
 
@@ -766,6 +818,10 @@ class Scheduler {
 				updateExpression: 'SET #status = :pending'
 			})
 		);
+	}
+
+	uuid(): string {
+		return _.compact([this.idPrefix, crypto.randomUUID()]).join('#');
 	}
 }
 
