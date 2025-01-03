@@ -49,7 +49,7 @@ global.fetch = vi.fn(async (url, options) => {
 	};
 });
 
-const createTestTask = (scheduleDelay: number = 1000): Scheduler.Task => {
+const createTestTask = (scheduleDelay: number = 1000, options?: Partial<Scheduler.Task>): Scheduler.Task => {
 	return taskShape({
 		method: 'POST',
 		namespace: 'spec',
@@ -64,7 +64,8 @@ const createTestTask = (scheduleDelay: number = 1000): Scheduler.Task => {
 			}
 		},
 		schedule: new Date(_.now() + scheduleDelay).toISOString(),
-		url: 'https://httpbin.org/anything'
+		url: 'https://httpbin.org/anything',
+		...options
 	});
 };
 
@@ -614,7 +615,7 @@ describe('/index.ts', () => {
 		beforeEach(() => {
 			vi.spyOn(scheduler.db, 'query');
 			vi.spyOn(scheduler.db, 'update');
-			vi.spyOn(scheduler, '$scheduleNextRepetition');
+			vi.spyOn(scheduler, 'scheduleNextRepetition');
 		});
 
 		afterEach(async () => {
@@ -693,7 +694,7 @@ describe('/index.ts', () => {
 				updateExpression: 'SET #response = :response, #status = :completed'
 			});
 
-			expect(scheduler.$scheduleNextRepetition).toHaveBeenCalledOnce();
+			expect(scheduler.scheduleNextRepetition).toHaveBeenCalledOnce();
 		});
 
 		it('should process with GMT', async () => {
@@ -748,7 +749,7 @@ describe('/index.ts', () => {
 				});
 			});
 
-			expect(scheduler.$scheduleNextRepetition).toHaveBeenCalledTimes(3);
+			expect(scheduler.scheduleNextRepetition).toHaveBeenCalledTimes(3);
 		});
 
 		it('should retry failed tasks', async () => {
@@ -769,7 +770,7 @@ describe('/index.ts', () => {
 			expect(updatedTask!.retries).toEqual(1);
 			expect(updatedTask!.status).toEqual('PENDING');
 
-			expect(scheduler.$scheduleNextRepetition).not.toHaveBeenCalled();
+			expect(scheduler.scheduleNextRepetition).not.toHaveBeenCalled();
 		});
 
 		it('should mark task as failed after max retries', async () => {
@@ -790,7 +791,7 @@ describe('/index.ts', () => {
 			expect(updatedTask!.status).toEqual('FAILED');
 			expect(updatedTask!.errors).toHaveLength(1);
 
-			expect(scheduler.$scheduleNextRepetition).not.toHaveBeenCalled();
+			expect(scheduler.scheduleNextRepetition).not.toHaveBeenCalled();
 		});
 
 		it('should handle ConditionalCheckFailedException', async () => {
@@ -818,7 +819,7 @@ describe('/index.ts', () => {
 
 			expect(scheduler.db.update).toHaveBeenCalledOnce();
 			expect(updatedTask!.status).toEqual('PENDING');
-			expect(scheduler.$scheduleNextRepetition).not.toHaveBeenCalled();
+			expect(scheduler.scheduleNextRepetition).not.toHaveBeenCalled();
 		});
 
 		it('should not process suspended tasks', async () => {
@@ -1013,7 +1014,7 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('$scheduleNextRepetition', () => {
+	describe('scheduleNextRepetition', () => {
 		beforeEach(() => {
 			vi.spyOn(scheduler.db, 'put');
 		});
@@ -1048,7 +1049,7 @@ describe('/index.ts', () => {
 			// ensure different __createdAt
 			await wait(100);
 
-			const nextTask = await scheduler.$scheduleNextRepetition(task);
+			const nextTask = await scheduler.scheduleNextRepetition(task);
 
 			expect(new Date(nextTask!.__createdAt).getTime()).toBeGreaterThan(new Date(task.__createdAt).getTime());
 			expect(new Date(nextTask!.__updatedAt).getTime()).toBeGreaterThan(new Date(task.__updatedAt).getTime());
@@ -1098,7 +1099,7 @@ describe('/index.ts', () => {
 				}
 			};
 
-			const nextTask = await scheduler.$scheduleNextRepetition(task);
+			const nextTask = await scheduler.scheduleNextRepetition(task);
 
 			expect(nextTask).toBeUndefined();
 			expect(scheduler.db.put).not.toHaveBeenCalled();
@@ -1119,7 +1120,7 @@ describe('/index.ts', () => {
 				}
 			};
 
-			const nextTask = await scheduler.$scheduleNextRepetition(task);
+			const nextTask = await scheduler.scheduleNextRepetition(task);
 
 			expect(nextTask).toBeUndefined();
 			expect(scheduler.db.put).not.toHaveBeenCalled();
@@ -1140,7 +1141,7 @@ describe('/index.ts', () => {
 				}
 			};
 
-			await scheduler.$scheduleNextRepetition(task);
+			await scheduler.scheduleNextRepetition(task);
 
 			expect(scheduler.db.put).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1293,6 +1294,89 @@ describe('/index.ts', () => {
 					return item.status === 'SUSPENDED';
 				})
 			).toBe(true);
+		});
+	});
+
+	describe('taskFetchRequest', () => {
+		describe('GET', () => {
+			it('should returns adding qs', () => {
+				const task = createTestTask(1000, {
+					body: { a: 1, b: 2 },
+					headers: { a: '1' },
+					method: 'GET',
+					url: 'https://httpbin.org/anything'
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				expect(res.body).toBeNull();
+				expect(res.headers).toEqual({ a: '1' });
+				expect(res.method).toEqual('GET');
+				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
+			});
+
+			it('should returns merging qs', () => {
+				const task = createTestTask(1000, {
+					body: { b: 2 },
+					headers: { a: '1' },
+					method: 'GET',
+					url: 'https://httpbin.org/anything?a=1&b=1'
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				expect(res.body).toBeNull();
+				expect(res.headers).toEqual({ a: '1' });
+				expect(res.method).toEqual('GET');
+				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
+			});
+
+			it('should returns without qs', () => {
+				const task = createTestTask(1000, {
+					body: null,
+					headers: { a: '1' },
+					method: 'GET'
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				expect(res.body).toBeNull();
+				expect(res.headers).toEqual({ a: '1' });
+				expect(res.method).toEqual('GET');
+				expect(res.url).toEqual('https://httpbin.org/anything');
+			});
+		});
+
+		describe('POST', () => {
+			it('should returns with body', () => {
+				const task = createTestTask(1000, {
+					body: { a: 1, b: 2 },
+					headers: { a: '1' },
+					method: 'POST',
+					url: 'https://httpbin.org/anything?a=1&b=2'
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				expect(res.body).toEqual({ a: 1, b: 2 });
+				expect(res.headers).toEqual({ a: '1' });
+				expect(res.method).toEqual('POST');
+				expect(res.url).toEqual('https://httpbin.org/anything?a=1&b=2');
+			});
+
+			it('should returns without body', () => {
+				const task = createTestTask(1000, {
+					body: null,
+					headers: { a: '1' }
+				});
+
+				const res = scheduler.taskFetchRequest(task);
+
+				expect(res.body).toBeNull();
+				expect(res.headers).toEqual({ a: '1' });
+				expect(res.method).toEqual('POST');
+				expect(res.url).toEqual('https://httpbin.org/anything');
+			});
 		});
 	});
 

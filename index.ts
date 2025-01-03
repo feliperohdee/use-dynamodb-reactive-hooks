@@ -3,6 +3,7 @@ import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAll } from 'use-async-helpers';
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression } from 'use-dynamodb';
+import qs from 'use-qs';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
 
@@ -31,7 +32,7 @@ const schedulerTask = z.object({
 		.default(() => {
 			return new Date().toISOString();
 		}),
-	body: z.unknown().nullable(),
+	body: z.record(z.any()).nullable(),
 	errors: z.array(z.string()),
 	headers: z.record(z.string()),
 	id: z.string().uuid(),
@@ -98,7 +99,7 @@ const schedulerFetchInput = z
 			)
 			.returns(z.promise(z.void()))
 			.optional(),
-		startKey: z.record(z.unknown()).nullable().default(null),
+		startKey: z.record(z.any()).nullable().default(null),
 		status: schedulerTaskStatus.nullable().optional(),
 		to: z.string().datetime({ offset: true }).optional()
 	})
@@ -414,16 +415,11 @@ class Scheduler {
 									updateExpression: 'SET #status = :processing'
 								});
 
-								const res = await fetch(task.url, {
-									method: task.method,
-									headers: task.headers,
-									body: task.method === 'POST' ? JSON.stringify(task.body) : undefined
-								});
-
-								const headers: Record<string, string> = {};
-
-								res.headers.forEach((value, key) => {
-									headers[key] = value;
+								const { body, headers, method, url } = this.taskFetchRequest(task);
+								const res = await fetch(url, {
+									method: method,
+									headers: headers,
+									body: method === 'POST' || method === 'PUT' ? JSON.stringify(body) : undefined
 								});
 
 								if (res.ok) {
@@ -437,7 +433,7 @@ class Scheduler {
 											':processing': 'PROCESSING',
 											':response': {
 												body: await res.text(),
-												headers,
+												headers: Object.fromEntries(res.headers.entries()),
 												status: res.status
 											}
 										},
@@ -451,7 +447,7 @@ class Scheduler {
 										updateExpression: 'SET #response = :response, #status = :completed'
 									});
 
-									await this.$scheduleNextRepetition(taskUpdate);
+									await this.scheduleNextRepetition(taskUpdate);
 									processed++;
 								} else {
 									throw new Error(`Request failed with status ${res.status}`);
@@ -605,7 +601,7 @@ class Scheduler {
 		return _.omit(res, ['__ts']);
 	}
 
-	async $scheduleNextRepetition(task: Scheduler.Task): Promise<Scheduler.Task | void> {
+	async scheduleNextRepetition(task: Scheduler.Task): Promise<Scheduler.Task | void> {
 		if (!task.repeat?.enabled || task.status === 'FAILED') {
 			return;
 		}
@@ -716,6 +712,33 @@ class Scheduler {
 		return {
 			count: _.size(suspended),
 			items: suspended
+		};
+	}
+
+	taskFetchRequest(task: Scheduler.Task): {
+		body: Record<string, any> | null;
+		headers: Record<string, string>;
+		method: string;
+		url: string;
+	} {
+		const url = new URL(task.url);
+
+		if (task.method === 'POST' || task.method === 'PUT') {
+			return {
+				body: _.size(task.body) ? task.body : null,
+				headers: task.headers,
+				method: task.method,
+				url: task.url
+			};
+		}
+		return {
+			body: null,
+			headers: task.headers,
+			method: task.method,
+			url: `${url.protocol}//${url.host}${url.pathname}${qs.stringify({
+				...Object.fromEntries(url.searchParams.entries()),
+				...task.body
+			})}`
 		};
 	}
 
