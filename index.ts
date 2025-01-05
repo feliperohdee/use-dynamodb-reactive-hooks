@@ -236,7 +236,7 @@ class Scheduler {
 		this.webhooks = webhooks;
 	}
 
-	calculateNextSchedule(currentTime: string, rule: Scheduler.Task['repeat']): string {
+	private calculateNextSchedule(currentTime: string, rule: Scheduler.Task['repeat']): string {
 		let current = new Date(currentTime);
 		let intervalMs: number;
 
@@ -873,7 +873,7 @@ class Scheduler {
 		);
 	}
 
-	uuid(idPrefix?: string): string {
+	private uuid(idPrefix?: string): string {
 		return _.compact([idPrefix, crypto.randomUUID()]).join('#');
 	}
 }

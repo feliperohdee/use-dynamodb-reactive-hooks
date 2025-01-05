@@ -76,6 +76,7 @@ describe('/index.ts', () => {
 				unit: 'minutes'
 			};
 
+			// @ts-expect-error
 			const res = scheduler.calculateNextSchedule(currentTime, repeat);
 
 			expect(res).toEqual(new Date('2024-03-18T10:30:00.000Z').toISOString());
@@ -89,6 +90,7 @@ describe('/index.ts', () => {
 				unit: 'hours'
 			};
 
+			// @ts-expect-error
 			const res = scheduler.calculateNextSchedule(currentTime, repeat);
 
 			expect(res).toEqual(new Date('2024-03-18T12:00:00.000Z').toISOString());
@@ -102,6 +104,7 @@ describe('/index.ts', () => {
 				unit: 'days'
 			};
 
+			// @ts-expect-error
 			const res = scheduler.calculateNextSchedule(currentTime, repeat);
 
 			expect(res).toEqual(new Date('2024-03-19T10:00:00.000Z').toISOString());
@@ -115,6 +118,7 @@ describe('/index.ts', () => {
 				unit: 'hours'
 			};
 
+			// @ts-expect-error
 			const res = scheduler.calculateNextSchedule(currentTime, repeat);
 
 			expect(res).toEqual(new Date('2024-03-18T11:30:00.000Z').toISOString());
@@ -1778,12 +1782,14 @@ describe('/index.ts', () => {
 
 	describe('uuid', () => {
 		it('should generate a UUID with prefix', () => {
+			// @ts-expect-error
 			const uuid = scheduler.uuid('test');
 
 			expect(uuid).toMatch(/^test#[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
 		});
 
 		it('should generate a UUID without prefix', () => {
+			// @ts-expect-error
 			const uuid = scheduler.uuid();
 
 			expect(uuid).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
