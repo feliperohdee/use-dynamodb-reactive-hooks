@@ -591,8 +591,6 @@ class Hooks {
 									retryLimit: task.retryLimit
 								});
 
-								console.log(response);
-
 								const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 									attributeNames: {
 										'#count': 'count',
