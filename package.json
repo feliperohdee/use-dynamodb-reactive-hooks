@@ -1,5 +1,5 @@
 {
-	"name": "use-dynamodb-scheduler",
+	"name": "use-dynamodb-scheduler-hooks",
 	"dependencies": {
 		"lodash": "^4.17.21",
 		"use-async-helpers": "^1.0.15",
@@ -24,7 +24,7 @@
 	"main": "dist/index.js",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/feliperohdee/use-dynamodb"
+		"url": "https://github.com/feliperohdee/use-dynamodb-scheduler-hooks"
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.json",
@@ -34,5 +34,5 @@
 		"test": "./.test.sh",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.9"
+	"version": "1.0.1"
 }

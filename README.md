@@ -1,4 +1,4 @@
-# Use DynamoDB Scheduler
+# Use DynamoDB Scheduler Hooks
 
 A TypeScript library that provides a webhook scheduling system using Amazon DynamoDB as the backend. Schedule HTTP webhooks to be triggered at specific times or intervals, with full management and monitoring capabilities.
 
@@ -22,9 +22,9 @@ A TypeScript library that provides a webhook scheduling system using Amazon Dyna
 ## 📦 Installation
 
 ```bash
-npm install use-dynamodb-scheduler
+npm install use-dynamodb-scheduler-hooks
 # or
-yarn add use-dynamodb-scheduler
+yarn add use-dynamodb-scheduler-hooks
 ```
 
 ## 🛠️ Usage
@@ -32,9 +32,9 @@ yarn add use-dynamodb-scheduler
 ### Initialization
 
 ```typescript
-import Scheduler from 'use-dynamodb-scheduler';
+import Hooks from 'use-dynamodb-scheduler-hooks';
 
-const scheduler = new Scheduler({
+const hooks = new Hooks({
 	accessKeyId: 'YOUR_ACCESS_KEY',
 	concurrency: 25, // Optional: default concurrent webhook execution limit
 	createTable: true, // Optional: automatically create table
@@ -51,7 +51,7 @@ const scheduler = new Scheduler({
 
 ```typescript
 // Register a simple webhook
-const webhook = await scheduler.register({
+const webhook = await hooks.register({
 	namespace: 'my-app',
 	method: 'POST',
 	url: 'https://api.example.com/endpoint',
@@ -67,7 +67,7 @@ const webhook = await scheduler.register({
 });
 
 // Register a recurring webhook
-const recurringWebhook = await scheduler.register({
+const recurringWebhook = await hooks.register({
 	namespace: 'my-app',
 	method: 'GET',
 	url: 'https://api.example.com/status',
@@ -84,10 +84,10 @@ const recurringWebhook = await scheduler.register({
 
 ```typescript
 // Trigger due webhooks
-const { processed, errors } = await scheduler.trigger();
+const { processed, errors } = await hooks.trigger();
 
 // Dry run to see what would be triggered
-const dryrun = await scheduler.triggerDryrun({
+const dryrun = await hooks.triggerDryrun({
 	namespace: 'my-app',
 	limit: 100,
 	date: new Date().toISOString() // Optional: specific date
@@ -98,13 +98,13 @@ const dryrun = await scheduler.triggerDryrun({
 
 ```typescript
 // Fetch webhooks by namespace
-const { items, count, lastEvaluatedKey } = await scheduler.fetch({
+const { items, count, lastEvaluatedKey } = await hooks.fetch({
 	namespace: 'my-app',
 	limit: 100
 });
 
 // Fetch webhooks with filters
-const filteredWebhooks = await scheduler.fetch({
+const filteredWebhooks = await hooks.fetch({
 	namespace: 'my-app',
 	status: 'ACTIVE',
 	from: '2024-03-01T00:00:00Z',
@@ -112,13 +112,13 @@ const filteredWebhooks = await scheduler.fetch({
 });
 
 // Get specific webhook
-const webhook = await scheduler.get({
+const webhook = await hooks.get({
 	namespace: 'my-app',
 	id: 'webhook-id'
 });
 
 // Fetch execution logs
-const logs = await scheduler.fetchLogs({
+const logs = await hooks.fetchLogs({
 	namespace: 'my-app',
 	from: '2024-03-01T00:00:00Z',
 	to: '2024-03-31T23:59:59Z'
@@ -129,13 +129,13 @@ const logs = await scheduler.fetchLogs({
 
 ```typescript
 // Delete a single webhook
-const deletedWebhook = await scheduler.delete({
+const deletedWebhook = await hooks.delete({
 	namespace: 'my-app',
 	id: 'webhook-id'
 });
 
 // Delete multiple webhooks based on criteria
-const { count, items } = await scheduler.deleteMany({
+const { count, items } = await hooks.deleteMany({
 	namespace: 'my-app',
 	status: 'DONE',
 	from: '2024-03-01T00:00:00Z',
@@ -143,16 +143,16 @@ const { count, items } = await scheduler.deleteMany({
 });
 
 // Clear all webhooks in a namespace
-const { count } = await scheduler.clear('my-app');
+const { count } = await hooks.clear('my-app');
 
 // Suspend a single webhook (prevent it from being triggered)
-const suspendedWebhook = await scheduler.suspend({
+const suspendedWebhook = await hooks.suspend({
 	namespace: 'my-app',
 	id: 'webhook-id'
 });
 
 // Suspend multiple webhooks based on criteria
-const { count, items } = await scheduler.suspendMany({
+const { count, items } = await hooks.suspendMany({
 	namespace: 'my-app',
 	from: '2024-03-01T00:00:00Z',
 	to: '2024-03-31T23:59:59Z',
@@ -160,7 +160,7 @@ const { count, items } = await scheduler.suspendMany({
 });
 
 // Unsuspend a webhook (allow it to be triggered again)
-const unsuspendedWebhook = await scheduler.unsuspend({
+const unsuspendedWebhook = await hooks.unsuspend({
 	namespace: 'my-app',
 	id: 'webhook-id'
 });

@@ -13,8 +13,8 @@ const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
 
-const schedulerTaskStatus = z.enum(['ACTIVE', 'DONE', 'FAILED', 'SUSPENDED', 'PROCESSING']);
-const schedulerTask = z.object({
+const hooksTaskStatus = z.enum(['ACTIVE', 'DONE', 'FAILED', 'SUSPENDED', 'PROCESSING']);
+const hooksTask = z.object({
 	__createdAt: z
 		.string()
 		.datetime()
@@ -60,12 +60,12 @@ const schedulerTask = z.object({
 	}),
 	retryLimit: z.number().min(0).default(3),
 	scheduledDate: z.string().datetime(),
-	status: schedulerTaskStatus.default('ACTIVE')
+	status: hooksTaskStatus.default('ACTIVE')
 });
 
-const schedulerTaskInput = schedulerTask
+const hooksTaskInput = hooksTask
 	.extend({
-		request: schedulerTask.shape.request.partial({
+		request: hooksTask.shape.request.partial({
 			body: true,
 			headers: true,
 			method: true
@@ -84,12 +84,12 @@ const schedulerTaskInput = schedulerTask
 		repeat: true
 	});
 
-const schedulerDeleteInput = z.object({
+const hooksDeleteInput = z.object({
 	id: z.string(),
 	namespace: z.string()
 });
 
-const schedulerFetchInput = z
+const hooksFetchInput = z
 	.object({
 		chunkLimit: z.number().min(1).optional(),
 		desc: z.boolean().default(false),
@@ -102,13 +102,13 @@ const schedulerFetchInput = z
 			.args(
 				z.object({
 					count: z.number(),
-					items: z.array(schedulerTask)
+					items: z.array(hooksTask)
 				})
 			)
 			.returns(z.promise(z.void()))
 			.optional(),
 		startKey: z.record(z.any()).nullable().default(null),
-		status: schedulerTaskStatus.nullable().optional(),
+		status: hooksTaskStatus.nullable().optional(),
 		to: z.string().datetime({ offset: true }).optional()
 	})
 	.refine(
@@ -125,14 +125,14 @@ const schedulerFetchInput = z
 		}
 	);
 
-const schedulerFetchLogsInput = Webhooks.schema.fetchLogsInput;
-const schedulerGetInput = z.object({
+const hooksFetchLogsInput = Webhooks.schema.fetchLogsInput;
+const hooksGetInput = z.object({
 	id: z.string(),
 	namespace: z.string()
 });
 
-const schedulerLog = Webhooks.schema.log;
-const schedulerTriggerDryrunInput = z.object({
+const hooksLog = Webhooks.schema.log;
+const hooksTriggerDryrunInput = z.object({
 	date: z.string().datetime({ offset: true }).nullable().optional(),
 	id: z.string().optional(),
 	limit: z.number().min(1).default(100),
@@ -140,18 +140,18 @@ const schedulerTriggerDryrunInput = z.object({
 });
 
 const schema = {
-	deleteInput: schedulerDeleteInput,
-	fetchInput: schedulerFetchInput,
-	fetchLogsInput: schedulerFetchLogsInput,
-	getInput: schedulerGetInput,
-	log: schedulerLog,
-	task: schedulerTask,
-	taskInput: schedulerTaskInput,
-	taskStatus: schedulerTaskStatus,
-	triggerDryrunInput: schedulerTriggerDryrunInput
+	deleteInput: hooksDeleteInput,
+	fetchInput: hooksFetchInput,
+	fetchLogsInput: hooksFetchLogsInput,
+	getInput: hooksGetInput,
+	log: hooksLog,
+	task: hooksTask,
+	taskInput: hooksTaskInput,
+	taskStatus: hooksTaskStatus,
+	triggerDryrunInput: hooksTriggerDryrunInput
 };
 
-namespace Scheduler {
+namespace Hooks {
 	export type ConstructorOptions = {
 		accessKeyId: string;
 		concurrency?: number;
@@ -164,31 +164,31 @@ namespace Scheduler {
 		tasksTableName: string;
 	};
 
-	export type DeleteInput = z.input<typeof schedulerDeleteInput>;
-	export type FetchInput = z.input<typeof schedulerFetchInput>;
-	export type FetchLogsInput = z.input<typeof schedulerFetchLogsInput>;
-	export type GetInput = z.input<typeof schedulerGetInput>;
-	export type Log = z.infer<typeof schedulerLog>;
-	export type Task = z.infer<typeof schedulerTask>;
-	export type TaskInput = z.input<typeof schedulerTaskInput>;
-	export type TaskStatus = z.infer<typeof schedulerTaskStatus>;
-	export type TriggerDryrunInput = z.input<typeof schedulerTriggerDryrunInput>;
+	export type DeleteInput = z.input<typeof hooksDeleteInput>;
+	export type FetchInput = z.input<typeof hooksFetchInput>;
+	export type FetchLogsInput = z.input<typeof hooksFetchLogsInput>;
+	export type GetInput = z.input<typeof hooksGetInput>;
+	export type Log = z.infer<typeof hooksLog>;
+	export type Task = z.infer<typeof hooksTask>;
+	export type TaskInput = z.input<typeof hooksTaskInput>;
+	export type TaskStatus = z.infer<typeof hooksTaskStatus>;
+	export type TriggerDryrunInput = z.input<typeof hooksTriggerDryrunInput>;
 }
 
-const taskShape = (task: Partial<Scheduler.Task | Scheduler.TaskInput>): Scheduler.Task => {
-	return zDefault(schedulerTask, task);
+const taskShape = (task: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => {
+	return zDefault(hooksTask, task);
 };
 
-class Scheduler {
+class Hooks {
 	public static schema = schema;
 
 	public concurrency: number;
-	public db: { tasks: Dynamodb<Scheduler.Task> };
+	public db: { tasks: Dynamodb<Hooks.Task> };
 	public maxErrors: number;
 	public webhooks: Webhooks;
 
-	constructor(options: Scheduler.ConstructorOptions) {
-		const tasks = new Dynamodb<Scheduler.Task>({
+	constructor(options: Hooks.ConstructorOptions) {
+		const tasks = new Dynamodb<Hooks.Task>({
 			accessKeyId: options.accessKeyId,
 			indexes: [
 				{
@@ -236,7 +236,7 @@ class Scheduler {
 		this.webhooks = webhooks;
 	}
 
-	private calculateNextSchedule(currentTime: string, rule: Scheduler.Task['repeat']): string {
+	private calculateNextSchedule(currentTime: string, rule: Hooks.Task['repeat']): string {
 		let current = new Date(currentTime);
 		let intervalMs: number;
 
@@ -261,8 +261,8 @@ class Scheduler {
 		return this.db.tasks.clear(namespace);
 	}
 
-	async delete(args: Scheduler.DeleteInput): Promise<Scheduler.Task | null> {
-		args = await schedulerDeleteInput.parseAsync(args);
+	async delete(args: Hooks.DeleteInput): Promise<Hooks.Task | null> {
+		args = await hooksDeleteInput.parseAsync(args);
 
 		const res = await this.db.tasks.delete({
 			filter: {
@@ -277,9 +277,9 @@ class Scheduler {
 	}
 
 	async deleteMany(
-		args: Omit<Scheduler.FetchInput, 'limit' | 'onChunk' | 'startKey'>
+		args: Omit<Hooks.FetchInput, 'limit' | 'onChunk' | 'startKey'>
 	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
-		args = await schedulerFetchInput.parseAsync(args);
+		args = await hooksFetchInput.parseAsync(args);
 
 		let deleted: { id: string; namespace: string }[] = [];
 
@@ -301,10 +301,10 @@ class Scheduler {
 		};
 	}
 
-	async fetch(args: Scheduler.FetchInput): Promise<Dynamodb.MultiResponse<Scheduler.Task, false>> {
-		args = await schedulerFetchInput.parseAsync(args);
+	async fetch(args: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
+		args = await hooksFetchInput.parseAsync(args);
 
-		let queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
+		let queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
 			attributeNames: {},
 			attributeValues: {},
 			filterExpression: '',
@@ -399,12 +399,12 @@ class Scheduler {
 		};
 	}
 
-	async fetchLogs(args: Scheduler.FetchLogsInput): Promise<Dynamodb.MultiResponse<Scheduler.Log, false>> {
+	async fetchLogs(args: Hooks.FetchLogsInput): Promise<Dynamodb.MultiResponse<Hooks.Log, false>> {
 		return this.webhooks.fetchLogs(args);
 	}
 
-	async get(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
-		args = await schedulerGetInput.parseAsync(args);
+	async get(args: Hooks.GetInput): Promise<Hooks.Task | null> {
+		args = await hooksGetInput.parseAsync(args);
 
 		const res = await this.db.tasks.get({
 			item: {
@@ -416,8 +416,8 @@ class Scheduler {
 		return res ? taskShape(res) : null;
 	}
 
-	async register(args: Scheduler.TaskInput): Promise<Scheduler.Task> {
-		args = await schedulerTaskInput.parseAsync(args);
+	async register(args: Hooks.TaskInput): Promise<Hooks.Task> {
+		args = await hooksTaskInput.parseAsync(args);
 
 		const res = await this.db.tasks.put(
 			taskShape({
@@ -440,7 +440,7 @@ class Scheduler {
 		return _.omit(res, ['__ts']);
 	}
 
-	async suspend(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
+	async suspend(args: Hooks.GetInput): Promise<Hooks.Task | null> {
 		const task = await this.get(args);
 
 		if (!task) {
@@ -467,7 +467,7 @@ class Scheduler {
 	}
 
 	async suspendMany(
-		args: Omit<Scheduler.FetchInput, 'limit' | 'onChunk' | 'startKey'>
+		args: Omit<Hooks.FetchInput, 'limit' | 'onChunk' | 'startKey'>
 	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
 		let suspended: { id: string; namespace: string }[] = [];
 
@@ -591,7 +591,7 @@ class Scheduler {
 
 								console.log(response);
 
-								const updateOptions: Dynamodb.UpdateOptions<Scheduler.Task> = {
+								const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 									attributeNames: {
 										'#count': 'count',
 										'#execution': 'execution',
@@ -691,7 +691,7 @@ class Scheduler {
 
 								const task = taskShape(item);
 								const httpError = HttpError.wrap(err as Error);
-								const updateOptions: Dynamodb.UpdateOptions<Scheduler.Task> = {
+								const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 									attributeNames: {
 										'#count': 'count',
 										'#errors': 'errors',
@@ -781,14 +781,14 @@ class Scheduler {
 		return result;
 	}
 
-	async triggerDryrun(args: Scheduler.TriggerDryrunInput = {}): Promise<{
+	async triggerDryrun(args: Hooks.TriggerDryrunInput = {}): Promise<{
 		count: number;
 		items: { namespace: string; id: string; scheduledDate: string }[];
 	}> {
-		args = await schedulerTriggerDryrunInput.parseAsync(args);
+		args = await hooksTriggerDryrunInput.parseAsync(args);
 
 		const date = args.date ? new Date(args.date).toISOString() : new Date().toISOString();
-		const queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
+		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
 			filterExpression: '',
 			index: 'status-scheduled-date',
 			limit: args.limit,
@@ -837,7 +837,7 @@ class Scheduler {
 
 		return {
 			count: res.count,
-			items: _.map(res.items, (task: Scheduler.Task) => {
+			items: _.map(res.items, (task: Hooks.Task) => {
 				return {
 					namespace: task.namespace,
 					id: task.id,
@@ -847,7 +847,7 @@ class Scheduler {
 		};
 	}
 
-	async unsuspend(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
+	async unsuspend(args: Hooks.GetInput): Promise<Hooks.Task | null> {
 		const task = await this.get(args);
 
 		if (!task) {
@@ -879,4 +879,4 @@ class Scheduler {
 }
 
 export { MINUTE_IN_MS, HOUR_IN_MS, DAY_IN_MS, taskShape };
-export default Scheduler;
+export default Hooks;
