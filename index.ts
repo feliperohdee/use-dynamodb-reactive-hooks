@@ -59,7 +59,7 @@ const hooksTask = z.object({
 		url: z.string().url()
 	}),
 	retryLimit: z.number().min(0).default(3),
-	scheduledDate: z.string().datetime(),
+	scheduledDate: z.string().datetime({ offset: true }),
 	status: hooksTaskStatus.default('ACTIVE')
 });
 
@@ -419,6 +419,7 @@ class Hooks {
 	async register(args: Hooks.TaskInput): Promise<Hooks.Task> {
 		args = await hooksTaskInput.parseAsync(args);
 
+		const scheduledDate = new Date(args.scheduledDate).toISOString();
 		const res = await this.db.tasks.put(
 			taskShape({
 				...args,
@@ -426,14 +427,15 @@ class Hooks {
 					count: 0,
 					failed: 0,
 					firstExecutionDate: null,
-					firstScheduledDate: args.scheduledDate,
+					firstScheduledDate: scheduledDate,
 					lastExecutionDate: null,
 					lastResponseBody: '',
 					lastResponseHeaders: {},
 					lastResponseStatus: 0,
 					successful: 0
 				},
-				id: this.uuid(args.idPrefix)
+				id: this.uuid(args.idPrefix),
+				scheduledDate
 			})
 		);
 

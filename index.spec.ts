@@ -726,6 +726,94 @@ describe('/index.ts', () => {
 				status: 'ACTIVE'
 			});
 		});
+		
+		it('should create task with GMT', async () => {
+			const res = await hooks.register({
+				namespace: 'spec',
+				request: {
+					url: 'https://httpbin.org/anything'
+				},
+				scheduledDate: '2025-01-01T00:00:00-03:00'
+			});
+
+			expect(hooks.db.tasks.put).toHaveBeenCalledWith({
+				__createdAt: expect.any(String),
+				__updatedAt: expect.any(String),
+				errors: {
+					count: 0,
+					firstErrorDate: null,
+					lastError: null,
+					lastErrorDate: null
+				},
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: null,
+					firstScheduledDate: '2025-01-01T03:00:00.000Z',
+					lastExecutionDate: null,
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				repeat: {
+					interval: 1,
+					max: 1,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'GET',
+					url: 'https://httpbin.org/anything'
+				},
+				retryLimit: 3,
+				scheduledDate: '2025-01-01T03:00:00.000Z',
+				status: 'ACTIVE'
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__updatedAt: expect.any(String),
+				errors: {
+					count: 0,
+					firstErrorDate: null,
+					lastError: null,
+					lastErrorDate: null
+				},
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: null,
+					firstScheduledDate: '2025-01-01T03:00:00.000Z',
+					lastExecutionDate: null,
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				repeat: {
+					interval: 1,
+					max: 1,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'GET',
+					url: 'https://httpbin.org/anything'
+				},
+				retryLimit: 3,
+				scheduledDate: '2025-01-01T03:00:00.000Z',
+				status: 'ACTIVE'
+			});
+		});
 
 		it('should create task with idPrefix', async () => {
 			const res = await hooks.register({
