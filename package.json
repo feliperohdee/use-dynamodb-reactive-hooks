@@ -4,7 +4,8 @@
 		"lodash": "^4.17.21",
 		"use-async-helpers": "^1.0.15",
 		"use-dynamodb": "^1.0.44",
-		"use-qs": "^1.0.0",
+		"use-dynamodb-webhooks": "^1.0.6",
+		"use-http-error": "^1.0.1",
 		"zod": "^3.24.1",
 		"zod-default-instance": "^1.0.12"
 	},
@@ -33,5 +34,5 @@
 		"test": "./.test.sh",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.6"
+	"version": "1.0.7"
 }

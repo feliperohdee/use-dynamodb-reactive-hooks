@@ -2,8 +2,9 @@ import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAll } from 'use-async-helpers';
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import Dynamodb, { concatConditionExpression } from 'use-dynamodb';
-import qs from 'use-qs';
+import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
+import HttpError from 'use-http-error';
+import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
 
@@ -12,14 +13,7 @@ const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
 
-const schedulerTaskMethod = z.enum(['DELETE', 'GET', 'HEAD', 'POST', 'PUT']);
-const schedulerTaskStatus = z.enum(['COMPLETED', 'FAILED', 'SUSPENDED', 'PENDING', 'PROCESSING']);
-const schedulerTaskRepeatRule = z.object({
-	interval: z.number().min(1),
-	max: z.number().min(0),
-	unit: z.enum(['minutes', 'hours', 'days'])
-});
-
+const schedulerTaskStatus = z.enum(['ACTIVE', 'DONE', 'FAILED', 'SUSPENDED', 'PROCESSING']);
 const schedulerTask = z.object({
 	__createdAt: z
 		.string()
@@ -33,58 +27,61 @@ const schedulerTask = z.object({
 		.default(() => {
 			return new Date().toISOString();
 		}),
-	body: z.record(z.any()).nullable(),
-	errors: z.array(z.string()),
-	headers: z.record(z.string()),
-	id: z.string().uuid(),
-	method: schedulerTaskMethod.default('GET'),
+	errors: z.object({
+		count: z.number(),
+		firstErrorDate: z.string().datetime().nullable(),
+		lastErrorDate: z.string().datetime().nullable(),
+		lastError: z.string().nullable()
+	}),
+	execution: z.object({
+		count: z.number(),
+		failed: z.number(),
+		firstExecutionDate: z.string().datetime().nullable(),
+		firstScheduledDate: z.string().datetime().nullable(),
+		lastExecutionDate: z.string().datetime().nullable(),
+		lastResponseBody: z.string(),
+		lastResponseHeaders: z.record(z.string()),
+		lastResponseStatus: z.number(),
+		successful: z.number()
+	}),
+	id: z.string(),
+	idPrefix: z.string(),
 	namespace: z.string(),
 	repeat: z.object({
-		count: z.number(),
-		enabled: z.boolean().default(false),
-		parent: z.string(),
-		rule: schedulerTaskRepeatRule
+		interval: z.number().min(1),
+		max: z.number().min(0).default(1),
+		unit: z.enum(['minutes', 'hours', 'days'])
 	}),
-	response: z.object({
-		body: z.string(),
-		headers: z.record(z.string()),
-		status: z.number()
+	request: z.object({
+		body: z.record(z.any()).nullable(),
+		headers: z.record(z.string()).nullable(),
+		method: Webhooks.schema.method.default('GET'),
+		url: z.string().url()
 	}),
-	retries: z.object({
-		count: z.number(),
-		last: z.string().datetime().nullable(),
-		max: z.number().default(3)
-	}),
-	schedule: z.string().datetime(),
-	status: schedulerTaskStatus.default('PENDING'),
-	url: z.string().url()
+	retryLimit: z.number().min(0).default(3),
+	scheduledDate: z.string().datetime(),
+	status: schedulerTaskStatus.default('ACTIVE')
 });
 
 const schedulerTaskInput = schedulerTask
+	.extend({
+		request: schedulerTask.shape.request.partial({
+			body: true,
+			headers: true,
+			method: true
+		})
+	})
 	.omit({
 		__createdAt: true,
 		__updatedAt: true,
 		errors: true,
+		execution: true,
 		id: true,
-		response: true,
-		retries: true,
 		status: true
 	})
-	.extend({
-		body: schedulerTask.shape.body.optional(),
-		headers: schedulerTask.shape.headers.optional(),
-		repeat: schedulerTask.shape.repeat
-			.omit({
-				count: true,
-				parent: true
-			})
-			.optional(),
-		retries: schedulerTask.shape.retries
-			.omit({
-				count: true,
-				last: true
-			})
-			.optional()
+	.partial({
+		idPrefix: true,
+		repeat: true
 	});
 
 const schedulerDeleteInput = z.object({
@@ -128,11 +125,13 @@ const schedulerFetchInput = z
 		}
 	);
 
+const schedulerFetchLogsInput = Webhooks.schema.fetchLogsInput;
 const schedulerGetInput = z.object({
 	id: z.string(),
 	namespace: z.string()
 });
 
+const schedulerLog = Webhooks.schema.log;
 const schedulerTriggerDryrunInput = z.object({
 	date: z.string().datetime({ offset: true }).nullable().optional(),
 	id: z.string().optional(),
@@ -140,33 +139,40 @@ const schedulerTriggerDryrunInput = z.object({
 	namespace: z.string().optional()
 });
 
+const schema = {
+	deleteInput: schedulerDeleteInput,
+	fetchInput: schedulerFetchInput,
+	fetchLogsInput: schedulerFetchLogsInput,
+	getInput: schedulerGetInput,
+	log: schedulerLog,
+	task: schedulerTask,
+	taskInput: schedulerTaskInput,
+	taskStatus: schedulerTaskStatus,
+	triggerDryrunInput: schedulerTriggerDryrunInput
+};
+
 namespace Scheduler {
 	export type ConstructorOptions = {
 		accessKeyId: string;
 		concurrency?: number;
 		createTable?: boolean;
-		idPrefix?: string;
+		logsTableName: string;
+		logsTtlInSeconds?: number;
+		maxErrors?: number;
 		region: string;
 		secretAccessKey: string;
-		tableName: string;
+		tasksTableName: string;
 	};
 
 	export type DeleteInput = z.input<typeof schedulerDeleteInput>;
 	export type FetchInput = z.input<typeof schedulerFetchInput>;
+	export type FetchLogsInput = z.input<typeof schedulerFetchLogsInput>;
 	export type GetInput = z.input<typeof schedulerGetInput>;
+	export type Log = z.infer<typeof schedulerLog>;
 	export type Task = z.infer<typeof schedulerTask>;
 	export type TaskInput = z.input<typeof schedulerTaskInput>;
-	export type TaskMethod = z.infer<typeof schedulerTaskMethod>;
-	export type TaskRepeatRule = z.infer<typeof schedulerTaskRepeatRule>;
 	export type TaskStatus = z.infer<typeof schedulerTaskStatus>;
 	export type TriggerDryrunInput = z.input<typeof schedulerTriggerDryrunInput>;
-
-	export type TaskFetchRequestResponse = {
-		body: BodyInit | null;
-		headers: Headers;
-		method: TaskMethod;
-		url: string;
-	};
 }
 
 const taskShape = (task: Partial<Scheduler.Task | Scheduler.TaskInput>): Scheduler.Task => {
@@ -174,26 +180,29 @@ const taskShape = (task: Partial<Scheduler.Task | Scheduler.TaskInput>): Schedul
 };
 
 class Scheduler {
+	public static schema = schema;
+
 	public concurrency: number;
-	public db: Dynamodb<Scheduler.Task>;
-	public idPrefix?: string;
+	public db: { tasks: Dynamodb<Scheduler.Task> };
+	public maxErrors: number;
+	public webhooks: Webhooks;
 
 	constructor(options: Scheduler.ConstructorOptions) {
-		const db = new Dynamodb<Scheduler.Task>({
+		const tasks = new Dynamodb<Scheduler.Task>({
 			accessKeyId: options.accessKeyId,
 			indexes: [
 				{
-					name: 'status__schedule',
+					name: 'status-scheduled-date',
 					partition: 'status',
 					partitionType: 'S',
-					sort: 'schedule',
+					sort: 'scheduledDate',
 					sortType: 'S'
 				},
 				{
-					name: 'namespace__schedule',
+					name: 'namespace-scheduled-date',
 					partition: 'namespace',
 					partitionType: 'S',
-					sort: 'schedule',
+					sort: 'scheduledDate',
 					sortType: 'S'
 				}
 			],
@@ -203,21 +212,31 @@ class Scheduler {
 				sort: 'id'
 			},
 			secretAccessKey: options.secretAccessKey,
-			table: options.tableName
+			table: options.tasksTableName
+		});
+
+		const webhooks = new Webhooks({
+			accessKeyId: options.accessKeyId,
+			createTable: options.createTable,
+			region: options.region,
+			secretAccessKey: options.secretAccessKey,
+			tableName: options.logsTableName,
+			ttlInSeconds: options.logsTtlInSeconds
 		});
 
 		if (options.createTable) {
 			(async () => {
-				await db.createTable();
+				await tasks.createTable();
 			})();
 		}
 
 		this.concurrency = options.concurrency || DEFAULT_CONCURRENCY;
-		this.db = db;
-		this.idPrefix = options.idPrefix;
+		this.db = { tasks };
+		this.maxErrors = options.maxErrors || 5;
+		this.webhooks = webhooks;
 	}
 
-	calculateNextSchedule(currentTime: string, rule: Scheduler.TaskRepeatRule): string {
+	calculateNextSchedule(currentTime: string, rule: Scheduler.Task['repeat']): string {
 		let current = new Date(currentTime);
 		let intervalMs: number;
 
@@ -239,13 +258,13 @@ class Scheduler {
 	}
 
 	async clear(namespace: string): Promise<{ count: number }> {
-		return this.db.clear(namespace);
+		return this.db.tasks.clear(namespace);
 	}
 
 	async delete(args: Scheduler.DeleteInput): Promise<Scheduler.Task | null> {
 		args = await schedulerDeleteInput.parseAsync(args);
 
-		const res = await this.db.delete({
+		const res = await this.db.tasks.delete({
 			filter: {
 				item: {
 					namespace: args.namespace,
@@ -269,7 +288,7 @@ class Scheduler {
 			chunkLimit: args.chunkLimit || 100,
 			limit: Infinity,
 			onChunk: async ({ items }) => {
-				await this.db.batchDelete(items);
+				await this.db.tasks.batchDelete(items);
 
 				deleted = [...deleted, ...items];
 			},
@@ -298,7 +317,7 @@ class Scheduler {
 
 		if (args.from && args.to) {
 			queryOptions.attributeNames = {
-				'#schedule': 'schedule'
+				'#scheduledDate': 'scheduledDate'
 			};
 
 			queryOptions.attributeValues = {
@@ -325,7 +344,7 @@ class Scheduler {
 			}
 
 			if (args.from && args.to) {
-				queryOptions.filterExpression = '#schedule BETWEEN :from AND :to';
+				queryOptions.filterExpression = '#scheduledDate BETWEEN :from AND :to';
 			}
 
 			if (args.onChunk) {
@@ -336,7 +355,7 @@ class Scheduler {
 				queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression!, '#status = :status');
 			}
 
-			const res = await this.db.query(queryOptions);
+			const res = await this.db.tasks.query(queryOptions);
 
 			return {
 				...res,
@@ -348,7 +367,7 @@ class Scheduler {
 			attributeNames: queryOptions.attributeNames,
 			attributeValues: queryOptions.attributeValues,
 			filterExpression: '',
-			index: 'namespace__schedule',
+			index: 'namespace-scheduled-date',
 			item: { namespace: args.namespace },
 			limit: args.limit,
 			queryExpression: '',
@@ -361,7 +380,7 @@ class Scheduler {
 		}
 
 		if (args.from && args.to) {
-			queryOptions.queryExpression = '#schedule BETWEEN :from AND :to';
+			queryOptions.queryExpression = '#scheduledDate BETWEEN :from AND :to';
 		}
 
 		if (args.onChunk) {
@@ -372,7 +391,7 @@ class Scheduler {
 			queryOptions.filterExpression = '#status = :status';
 		}
 
-		const res = await this.db.query(queryOptions);
+		const res = await this.db.tasks.query(queryOptions);
 
 		return {
 			...res,
@@ -380,10 +399,14 @@ class Scheduler {
 		};
 	}
 
+	async fetchLogs(args: Scheduler.FetchLogsInput): Promise<Dynamodb.MultiResponse<Scheduler.Log, false>> {
+		return this.webhooks.fetchLogs(args);
+	}
+
 	async get(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
 		args = await schedulerGetInput.parseAsync(args);
 
-		const res = await this.db.get({
+		const res = await this.db.tasks.get({
 			item: {
 				namespace: args.namespace,
 				id: args.id
@@ -396,52 +419,25 @@ class Scheduler {
 	async register(args: Scheduler.TaskInput): Promise<Scheduler.Task> {
 		args = await schedulerTaskInput.parseAsync(args);
 
-		const res = await this.db.put(
+		const res = await this.db.tasks.put(
 			taskShape({
 				...args,
-				id: this.uuid()
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: null,
+					firstScheduledDate: args.scheduledDate,
+					lastExecutionDate: null,
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: this.uuid(args.idPrefix)
 			})
 		);
 
 		return _.omit(res, ['__ts']);
-	}
-
-	async registerNextRepetition(task: Scheduler.Task): Promise<Scheduler.Task | void> {
-		if (!task.repeat?.enabled || task.status === 'FAILED') {
-			return;
-		}
-
-		if (task.repeat.rule.max > 0 && task.repeat.count >= task.repeat.rule.max) {
-			return;
-		}
-
-		const date = new Date().toISOString();
-		const repeatCount = task.repeat.count + 1;
-		const resettedTask: Scheduler.Task = taskShape({
-			...task,
-			id: `${task.repeat.parent || task.id}__${repeatCount}`,
-			errors: [],
-			repeat: {
-				...task.repeat,
-				count: repeatCount,
-				parent: task.repeat.parent || task.id
-			},
-			response: {
-				body: '',
-				headers: {},
-				status: 0
-			},
-			retries: {
-				count: 0,
-				last: null,
-				max: task.retries?.max || 3
-			},
-			schedule: this.calculateNextSchedule(date, task.repeat.rule),
-			status: 'PENDING',
-			url: task.url
-		});
-
-		return taskShape(await this.db.put(resettedTask));
 	}
 
 	async suspend(args: Scheduler.GetInput): Promise<Scheduler.Task | null> {
@@ -452,13 +448,13 @@ class Scheduler {
 		}
 
 		return taskShape(
-			await this.db.update({
+			await this.db.tasks.update({
 				attributeNames: { '#status': 'status' },
 				attributeValues: {
-					':pending': 'PENDING',
+					':active': 'ACTIVE',
 					':suspended': 'SUSPENDED'
 				},
-				conditionExpression: '#status = :pending',
+				conditionExpression: '#status = :active',
 				filter: {
 					item: {
 						namespace: args.namespace,
@@ -483,21 +479,21 @@ class Scheduler {
 				await Promise.all(
 					_.map(items, async item => {
 						try {
-							await this.db.client.send(
+							await this.db.tasks.client.send(
 								new UpdateCommand({
-									ConditionExpression: '#status = :pending',
+									ConditionExpression: '#status = :active',
 									ExpressionAttributeNames: {
 										'#status': 'status'
 									},
 									ExpressionAttributeValues: {
-										':pending': 'PENDING',
+										':active': 'ACTIVE',
 										':suspended': 'SUSPENDED'
 									},
 									Key: {
 										namespace: item.namespace,
 										id: item.id
 									},
-									TableName: this.db.table,
+									TableName: this.db.tasks.table,
 									UpdateExpression: 'SET #status = :suspended'
 								})
 							);
@@ -524,210 +520,249 @@ class Scheduler {
 		};
 	}
 
-	taskFetchRequest(task: Scheduler.Task): Scheduler.TaskFetchRequestResponse {
-		const url = new URL(task.url);
-		const headers = new Headers(task.headers);
-
-		if (task.method === 'POST' || task.method === 'PUT') {
-			if (task.body && _.size(task.body)) {
-				const contentType = headers.get('content-type');
-
-				if (_.includes(contentType, 'application/x-www-form-urlencoded')) {
-					return {
-						body: qs.stringify(task.body, { addQueryPrefix: false }),
-						headers,
-						method: task.method,
-						url: task.url
-					};
-				} else if (_.includes(contentType, 'multipart/form-data')) {
-					const formdata = new FormData();
-
-					_.forEach(task.body, (value, key) => {
-						formdata.append(key, value);
-					});
-
-					return {
-						body: formdata,
-						headers,
-						method: task.method,
-						url: task.url
-					};
-				} else {
-					return {
-						body: JSON.stringify(task.body),
-						headers,
-						method: task.method,
-						url: task.url
-					};
-				}
-			}
-
-			return {
-				body: null,
-				headers,
-				method: task.method,
-				url: task.url
-			};
-		}
-
-		const queryString = qs.stringify({
-			...Object.fromEntries(url.searchParams.entries()),
-			...task.body
-		});
-
-		return {
-			body: null,
-			headers,
-			method: task.method,
-			url: `${url.protocol}//${url.host}${url.pathname}${queryString}`
-		};
-	}
-
 	async trigger(): Promise<{ processed: number; errors: number }> {
 		const now = new Date().toISOString();
-
-		let processed = 0;
-		let errors = 0;
+		const result = { processed: 0, errors: 0 };
 
 		try {
-			await this.db.query({
+			await this.db.tasks.query({
 				attributeNames: {
-					'#schedule': 'schedule',
+					'#count': 'count',
+					'#execution': 'execution',
+					'#max': 'max',
+					'#pid': 'pid',
+					'#repeat': 'repeat',
+					'#scheduledDate': 'scheduledDate',
 					'#status': 'status'
 				},
 				attributeValues: {
 					':now': now,
-					':pending': 'PENDING'
+					':active': 'ACTIVE',
+					':zero': 0
 				},
 				chunkLimit: 100,
-				index: 'status__schedule',
+				filterExpression: 'attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				index: 'status-scheduled-date',
 				onChunk: async ({ items }) => {
 					let promiseTasks: (() => Promise<void>)[] = [];
 
 					for (const item of items) {
-						const task = taskShape(item);
+						const pid = this.uuid();
 						const promiseTask = async () => {
 							try {
-								await this.db.update({
+								const task = taskShape(
+									await this.db.tasks.update({
+										attributeNames: {
+											'#count': 'count',
+											'#execution': 'execution',
+											'#max': 'max',
+											'#pid': 'pid',
+											'#repeat': 'repeat',
+											'#status': 'status'
+										},
+										attributeValues: {
+											':active': 'ACTIVE',
+											':pid': pid,
+											':processing': 'PROCESSING',
+											':zero': 0
+										},
+										// in case of other process already picked the task while it was being processed
+										conditionExpression:
+											'#status = :active AND attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+										filter: {
+											item: {
+												namespace: item.namespace,
+												id: item.id
+											}
+										},
+										updateExpression: 'SET #status = :processing, #pid = :pid'
+									})
+								);
+
+								const { response } = await this.webhooks.trigger({
+									idPrefix: task.idPrefix,
+									namespace: task.namespace,
+									requestBody: task.request.body,
+									requestHeaders: task.request.headers,
+									requestMethod: task.request.method,
+									requestUrl: task.request.url,
+									retryLimit: task.retryLimit
+								});
+
+								console.log(response);
+
+								const updateOptions: Dynamodb.UpdateOptions<Scheduler.Task> = {
 									attributeNames: {
-										'#status': 'status'
+										'#count': 'count',
+										'#execution': 'execution',
+										'#lastExecutionDate': 'lastExecutionDate',
+										'#lastResponseBody': 'lastResponseBody',
+										'#lastResponseHeaders': 'lastResponseHeaders',
+										'#lastResponseStatus': 'lastResponseStatus',
+										'#pid': 'pid',
+										'#successfulOrFailed': response.ok ? 'successful' : 'failed'
 									},
 									attributeValues: {
-										':pending': 'PENDING',
-										':processing': 'PROCESSING'
+										':now': now,
+										':one': 1,
+										':pid': pid,
+										':processing': 'PROCESSING',
+										':responseBody': response.body,
+										':responseHeaders': response.headers,
+										':responseStatus': response.status
 									},
-									// in case of other process already picked the task
-									conditionExpression: '#status = :pending',
+									conditionExpression: '#status = :processing AND #pid = :pid',
 									filter: {
 										item: {
 											namespace: task.namespace,
 											id: task.id
 										}
-									},
-									updateExpression: 'SET #status = :processing'
-								});
+									}
+								};
 
-								const { body, headers, method, url } = this.taskFetchRequest(task);
-								const res = await fetch(
-									url,
-									body && (method === 'POST' || method === 'PUT')
-										? {
-												body,
-												headers,
-												method
-											}
-										: {
-												headers,
-												method
-											}
-								);
+								updateOptions.updateExpression = [
+									`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+									`SET ${[
+										'#execution.#lastExecutionDate = :now',
+										'#execution.#lastResponseBody = :responseBody',
+										'#execution.#lastResponseHeaders = :responseHeaders',
+										'#execution.#lastResponseStatus = :responseStatus'
+									].join(', ')}`,
+									`REMOVE #pid`
+								].join(' ');
 
-								if (res.ok) {
-									const taskUpdate = await this.db.update({
-										attributeNames: {
-											'#response': 'response',
-											'#status': 'status'
-										},
-										attributeValues: {
-											':completed': 'COMPLETED',
-											':processing': 'PROCESSING',
-											':response': {
-												body: await res.text(),
-												headers: Object.fromEntries(res.headers.entries()),
-												status: res.status
-											}
-										},
-										conditionExpression: '#status = :processing',
-										filter: {
-											item: {
-												namespace: task.namespace,
-												id: task.id
-											}
-										},
-										updateExpression: 'SET #response = :response, #status = :completed'
-									});
+								if (task.execution.firstExecutionDate === null) {
+									updateOptions.attributeNames = {
+										...updateOptions.attributeNames,
+										'#firstExecutionDate': 'firstExecutionDate'
+									};
 
-									await this.registerNextRepetition(taskUpdate);
-									processed++;
-								} else {
-									throw new Error(`Request failed with status ${res.status}`);
+									updateOptions.updateExpression = concatUpdateExpression(
+										updateOptions.updateExpression || '',
+										'SET #execution.#firstExecutionDate = :now'
+									);
 								}
+
+								const nextExecutionCount = task.execution.count + 1;
+								const repeat = task.repeat.max === 0 || nextExecutionCount < task.repeat.max;
+
+								// keep ACTIVE status if repeat is enabled
+								if (repeat) {
+									updateOptions.attributeNames = {
+										...updateOptions.attributeNames,
+										'#scheduledDate': 'scheduledDate',
+										'#status': 'status'
+									};
+
+									updateOptions.attributeValues = {
+										...updateOptions.attributeValues,
+										':scheduledDate': this.calculateNextSchedule(task.scheduledDate, task.repeat),
+										':active': 'ACTIVE'
+									};
+
+									updateOptions.updateExpression = concatUpdateExpression(
+										updateOptions.updateExpression || '',
+										'SET #scheduledDate = :scheduledDate, #status = :active'
+									);
+								} else {
+									// set DONE status if repeat is disabled
+									updateOptions.attributeNames = {
+										...updateOptions.attributeNames,
+										'#status': 'status'
+									};
+
+									updateOptions.attributeValues = {
+										...updateOptions.attributeValues,
+										':done': 'DONE'
+									};
+
+									updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :done');
+								}
+
+								await this.db.tasks.update(updateOptions);
+
+								result.processed++;
 							} catch (err) {
 								if (err instanceof ConditionalCheckFailedException) {
 									return;
 								}
 
-								errors++;
+								result.errors++;
 
-								const newRetriesCount = task.retries.count + 1;
-								const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+								const task = taskShape(item);
+								const httpError = HttpError.wrap(err as Error);
+								const updateOptions: Dynamodb.UpdateOptions<Scheduler.Task> = {
+									attributeNames: {
+										'#count': 'count',
+										'#errors': 'errors',
+										'#lastError': 'lastError',
+										'#pid': 'pid'
+									},
+									attributeValues: {
+										':error': httpError.message,
+										':one': 1,
+										':now': now,
+										':pid': pid,
+										':processing': 'PROCESSING'
+									},
+									conditionExpression: '#status = :processing AND #pid = :pid',
+									filter: {
+										item: {
+											namespace: task.namespace,
+											id: task.id
+										}
+									}
+								};
 
-								if (newRetriesCount <= task.retries.max) {
-									await this.db.update({
-										attributeNames: {
-											'#errors': 'errors',
-											'#retries': 'retries',
-											'#status': 'status'
-										},
-										attributeValues: {
-											':errors': [errorMessage],
-											':list': [],
-											':retries': {
-												count: newRetriesCount,
-												last: new Date().toISOString(),
-												max: task.retries.max
-											},
-											':pending': 'PENDING'
-										},
-										filter: {
-											item: {
-												namespace: task.namespace,
-												id: task.id
-											}
-										},
-										updateExpression:
-											'SET #errors = list_append(if_not_exists(#errors, :list), :errors), #retries = :retries, #status = :pending'
-									});
-								} else {
-									await this.db.update({
-										attributeNames: {
-											'#errors': 'errors',
-											'#status': 'status'
-										},
-										attributeValues: {
-											':errors': [errorMessage],
-											':list': [],
-											':failed': 'FAILED'
-										},
-										filter: {
-											item: {
-												namespace: task.namespace,
-												id: task.id
-											}
-										},
-										updateExpression: 'SET #errors = list_append(if_not_exists(#errors, :list), :errors), #status = :failed'
-									});
+								updateOptions.updateExpression = [
+									`ADD ${['#errors.#count :one'].join(', ')}`,
+									`SET ${['#errors.#lastError = :error'].join(', ')}`,
+									`REMOVE #pid`
+								].join(' ');
+
+								if (task.errors.firstErrorDate === null) {
+									updateOptions.attributeNames = {
+										...updateOptions.attributeNames,
+										'#firstErrorDate': 'firstErrorDate'
+									};
+
+									updateOptions.updateExpression = concatUpdateExpression(
+										updateOptions.updateExpression || '',
+										'SET #errors.#firstErrorDate = :now'
+									);
 								}
+
+								// set FAILED status if max errors reached
+								const nextErrorsCount = task.errors.count + 1;
+
+								if (nextErrorsCount >= this.maxErrors) {
+									updateOptions.attributeNames = {
+										...updateOptions.attributeNames,
+										'#status': 'status'
+									};
+
+									updateOptions.attributeValues = {
+										...updateOptions.attributeValues,
+										':failed': 'FAILED'
+									};
+
+									updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :failed');
+								} else {
+									// keep ACTIVE status if max errors not reached
+									updateOptions.attributeNames = {
+										...updateOptions.attributeNames,
+										'#status': 'status'
+									};
+
+									updateOptions.attributeValues = {
+										...updateOptions.attributeValues,
+										':active': 'ACTIVE'
+									};
+
+									updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :active');
+								}
+
+								await this.db.tasks.update(updateOptions);
 							}
 						};
 
@@ -736,38 +771,38 @@ class Scheduler {
 
 					await promiseAll(promiseTasks, this.concurrency);
 				},
-				queryExpression: '#status = :pending AND #schedule <= :now'
+				queryExpression: '#status = :active AND #scheduledDate <= :now'
 			});
 		} catch (err) {
 			console.error('Error processing tasks:', err);
 			throw err;
 		}
 
-		return { processed, errors };
+		return result;
 	}
 
 	async triggerDryrun(args: Scheduler.TriggerDryrunInput = {}): Promise<{
 		count: number;
-		items: { namespace: string; id: string; schedule: string }[];
+		items: { namespace: string; id: string; scheduledDate: string }[];
 	}> {
 		args = await schedulerTriggerDryrunInput.parseAsync(args);
 
 		const date = args.date ? new Date(args.date).toISOString() : new Date().toISOString();
 		const queryOptions: Dynamodb.QueryOptions<Scheduler.Task> = {
 			filterExpression: '',
-			index: 'status__schedule',
+			index: 'status-scheduled-date',
 			limit: args.limit,
-			queryExpression: '#status = :pending AND #schedule <= :date'
+			queryExpression: '#status = :active AND #scheduledDate <= :date'
 		};
 
 		queryOptions.attributeNames = {
-			'#schedule': 'schedule',
+			'#scheduledDate': 'scheduledDate',
 			'#status': 'status'
 		};
 
 		queryOptions.attributeValues = {
-			':date': date,
-			':pending': 'PENDING'
+			':active': 'ACTIVE',
+			':date': date
 		};
 
 		if (args.namespace) {
@@ -798,7 +833,7 @@ class Scheduler {
 			queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', 'begins_with(#id, :id)');
 		}
 
-		const res = await this.db.query(queryOptions);
+		const res = await this.db.tasks.query(queryOptions);
 
 		return {
 			count: res.count,
@@ -806,7 +841,7 @@ class Scheduler {
 				return {
 					namespace: task.namespace,
 					id: task.id,
-					schedule: task.schedule
+					scheduledDate: task.scheduledDate
 				};
 			})
 		};
@@ -820,10 +855,10 @@ class Scheduler {
 		}
 
 		return taskShape(
-			await this.db.update({
+			await this.db.tasks.update({
 				attributeNames: { '#status': 'status' },
 				attributeValues: {
-					':pending': 'PENDING',
+					':active': 'ACTIVE',
 					':suspended': 'SUSPENDED'
 				},
 				conditionExpression: '#status = :suspended',
@@ -833,13 +868,13 @@ class Scheduler {
 						id: args.id
 					}
 				},
-				updateExpression: 'SET #status = :pending'
+				updateExpression: 'SET #status = :active'
 			})
 		);
 	}
 
-	uuid(): string {
-		return _.compact([this.idPrefix, crypto.randomUUID()]).join('#');
+	uuid(idPrefix?: string): string {
+		return _.compact([idPrefix, crypto.randomUUID()]).join('#');
 	}
 }
 

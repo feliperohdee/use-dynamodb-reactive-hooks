@@ -10,17 +10,20 @@ A TypeScript library that provides a webhook scheduling system using Amazon Dyna
 
 - ✅ Register webhooks to be triggered at specific times
 - 🔁 Support for recurring webhooks with flexible intervals
-- 📊 Webhook status tracking (PENDING, PROCESSING, COMPLETED, FAILED, SUSPENDED)
+- 📊 Webhook status tracking (ACTIVE, PROCESSING, DONE, FAILED, SUSPENDED)
 - 🔄 Automatic retries with configurable max attempts
 - 🕒 Built-in timestamp management
 - 📝 Comprehensive error tracking
 - 🔎 Rich querying capabilities by namespace, status, and time ranges
 - 🏃 Concurrent webhook execution with configurable limits
 - 📦 Batch operations support
+- 📊 Detailed execution logs and metrics
 
 ## 📦 Installation
 
 ```bash
+npm install use-dynamodb-scheduler
+# or
 yarn add use-dynamodb-scheduler
 ```
 
@@ -35,10 +38,12 @@ const scheduler = new Scheduler({
 	accessKeyId: 'YOUR_ACCESS_KEY',
 	concurrency: 25, // Optional: default concurrent webhook execution limit
 	createTable: true, // Optional: automatically create table
-	idPrefix: '', // Optional: custom webhook ID prefix
+	logsTableName: 'YOUR_LOGS_TABLE_NAME',
+	logsTtlInSeconds: 86400, // Optional: TTL for log entries
+	maxErrors: 5, // Optional: max errors before marking task as FAILED
 	region: 'us-east-1',
 	secretAccessKey: 'YOUR_SECRET_KEY',
-	tableName: 'YOUR_TABLE_NAME'
+	tasksTableName: 'YOUR_TABLE_NAME'
 });
 ```
 
@@ -50,12 +55,14 @@ const webhook = await scheduler.register({
 	namespace: 'my-app',
 	method: 'POST',
 	url: 'https://api.example.com/endpoint',
-	schedule: new Date('2024-03-20T10:00:00Z').toISOString(),
-	headers: {
-		'Content-Type': 'application/json'
-	},
-	body: {
-		key: 'value'
+	scheduledDate: new Date('2024-03-20T10:00:00Z').toISOString(),
+	request: {
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: {
+			key: 'value'
+		}
 	}
 });
 
@@ -64,14 +71,11 @@ const recurringWebhook = await scheduler.register({
 	namespace: 'my-app',
 	method: 'GET',
 	url: 'https://api.example.com/status',
-	schedule: new Date('2024-03-20T10:00:00Z').toISOString(),
+	scheduledDate: new Date('2024-03-20T10:00:00Z').toISOString(),
 	repeat: {
-		enabled: true,
-		rule: {
-			interval: 30,
-			max: 5,
-			unit: 'minutes'
-		}
+		interval: 30,
+		max: 5,
+		unit: 'minutes'
 	}
 });
 ```
@@ -85,7 +89,8 @@ const { processed, errors } = await scheduler.trigger();
 // Dry run to see what would be triggered
 const dryrun = await scheduler.triggerDryrun({
 	namespace: 'my-app',
-	limit: 100
+	limit: 100,
+	date: new Date().toISOString() // Optional: specific date
 });
 ```
 
@@ -101,7 +106,7 @@ const { items, count, lastEvaluatedKey } = await scheduler.fetch({
 // Fetch webhooks with filters
 const filteredWebhooks = await scheduler.fetch({
 	namespace: 'my-app',
-	status: 'COMPLETED',
+	status: 'ACTIVE',
 	from: '2024-03-01T00:00:00Z',
 	to: '2024-03-31T23:59:59Z'
 });
@@ -110,6 +115,13 @@ const filteredWebhooks = await scheduler.fetch({
 const webhook = await scheduler.get({
 	namespace: 'my-app',
 	id: 'webhook-id'
+});
+
+// Fetch execution logs
+const logs = await scheduler.fetchLogs({
+	namespace: 'my-app',
+	from: '2024-03-01T00:00:00Z',
+	to: '2024-03-31T23:59:59Z'
 });
 ```
 
@@ -125,7 +137,7 @@ const deletedWebhook = await scheduler.delete({
 // Delete multiple webhooks based on criteria
 const { count, items } = await scheduler.deleteMany({
 	namespace: 'my-app',
-	status: 'COMPLETED',
+	status: 'DONE',
 	from: '2024-03-01T00:00:00Z',
 	to: '2024-03-31T23:59:59Z'
 });
@@ -154,44 +166,56 @@ const unsuspendedWebhook = await scheduler.unsuspend({
 });
 ```
 
-## 📋 Webhook Schema
+## 📋 Task Schema
 
 ```typescript
-type Webhook = {
+type Task = {
 	// Required fields
 	namespace: string;
 	url: string;
-	schedule: string; // ISO date string
+	scheduledDate: string; // ISO date string
 	method: 'GET' | 'POST' | 'PUT';
 
 	// Optional fields
-	headers?: Record<string, string>;
-	body?: unknown;
+	request: {
+		headers?: Record<string, string>;
+		body?: unknown;
+		method: 'GET' | 'POST' | 'PUT';
+		url: string;
+	};
 
-	// Recurring webhook configuration
+	// Recurring task configuration
 	repeat?: {
-		enabled: boolean;
-		rule: {
-			interval: number;
-			max: number;
-			unit: 'minutes' | 'hours' | 'days';
-		};
+		interval: number;
+		max: number; // default: 1, 0 for infinite
+		unit: 'minutes' | 'hours' | 'days';
 	};
 
 	// System-managed fields
 	id: string;
-	status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'SUSPENDED';
-	retries: {
+	idPrefix?: string;
+	status: 'ACTIVE' | 'PROCESSING' | 'DONE' | 'FAILED' | 'SUSPENDED';
+	retryLimit: number; // default: 3
+
+	errors: {
 		count: number;
-		last: string | null;
-		max: number; // default: 3
+		firstErrorDate: string | null;
+		lastErrorDate: string | null;
+		lastError: string | null;
 	};
-	errors: string[];
-	response?: {
-		body: string;
-		headers: Record<string, string>;
-		status: number;
+
+	execution: {
+		count: number;
+		failed: number;
+		successful: number;
+		firstExecutionDate: string | null;
+		firstScheduledDate: string | null;
+		lastExecutionDate: string | null;
+		lastResponseBody: string;
+		lastResponseHeaders: Record<string, string>;
+		lastResponseStatus: number;
 	};
+
 	__createdAt: string;
 	__updatedAt: string;
 };
@@ -214,13 +238,15 @@ yarn test:coverage
 
 ## 📝 Notes
 
-- Failed webhooks will be retried according to the `maxRetries` configuration
+- Failed webhooks will be retried according to the `retryLimit` configuration
+- Tasks are marked as FAILED after reaching `maxErrors` threshold (default: 5)
 - Recurring webhooks are automatically rescheduled after successful execution
 - The scheduler uses DynamoDB's GSI capabilities for efficient webhook querying
 - All timestamps are in ISO 8601 format and stored in UTC
 - Webhook execution is concurrent with configurable limits
 - Batch operations (`deleteMany` and `suspendMany`) support chunked processing for better performance
 - The `chunkLimit` parameter in batch operations allows you to control the size of each processing batch
+- Execution logs are stored in a separate table with configurable TTL
 
 ## 📄 License
 
