@@ -1,4 +1,4 @@
-# Use DynamoDB Scheduler Hooks
+# Use DynamoDB Reactive Hooks
 
 A TypeScript library that provides a webhook scheduling system using Amazon DynamoDB as the backend. Schedule HTTP webhooks to be triggered at specific times or intervals, with full management and monitoring capabilities.
 
@@ -22,9 +22,9 @@ A TypeScript library that provides a webhook scheduling system using Amazon Dyna
 ## 📦 Installation
 
 ```bash
-npm install use-dynamodb-scheduler-hooks
+npm install use-dynamodb-reactive-hooks
 # or
-yarn add use-dynamodb-scheduler-hooks
+yarn add use-dynamodb-reactive-hooks
 ```
 
 ## 🛠️ Usage
@@ -32,7 +32,7 @@ yarn add use-dynamodb-scheduler-hooks
 ### Initialization
 
 ```typescript
-import Hooks from 'use-dynamodb-scheduler-hooks';
+import Hooks from 'use-dynamodb-reactive-hooks';
 
 const hooks = new Hooks({
 	accessKeyId: 'YOUR_ACCESS_KEY',
