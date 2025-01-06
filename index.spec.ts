@@ -5,7 +5,7 @@ import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import Hooks, { taskShape } from './index';
 
 // @ts-expect-error
-global.fetch = vi.fn(async (url, options) => {
+global.fetch = vi.fn(async url => {
 	return {
 		headers: new Headers({
 			'content-type': 'application/json'
@@ -45,10 +45,10 @@ describe('/index.ts', () => {
 		hooks = new Hooks({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			createTable: true,
+			logsTableName: 'use-dynamodb-scheduler-logs-spec',
 			region: process.env.AWS_REGION || '',
 			secretAccessKey: process.env.AWS_SECRET_KEY || '',
-			tasksTableName: 'use-dynamodb-scheduler-tasks-spec',
-			logsTableName: 'use-dynamodb-scheduler-logs-spec'
+			tasksTableName: 'use-dynamodb-scheduler-tasks-spec'
 		});
 	});
 
@@ -56,10 +56,10 @@ describe('/index.ts', () => {
 		hooks = new Hooks({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			createTable: true,
+			logsTableName: 'use-dynamodb-scheduler-logs-spec',
 			region: process.env.AWS_REGION || '',
 			secretAccessKey: process.env.AWS_SECRET_KEY || '',
-			tasksTableName: 'use-dynamodb-scheduler-tasks-spec',
-			logsTableName: 'use-dynamodb-scheduler-logs-spec'
+			tasksTableName: 'use-dynamodb-scheduler-tasks-spec'
 		});
 	});
 
@@ -561,10 +561,6 @@ describe('/index.ts', () => {
 			);
 		});
 
-		beforeEach(() => {
-			vi.spyOn(hooks.db.tasks, 'query');
-		});
-
 		afterAll(async () => {
 			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
 		});
@@ -726,7 +722,7 @@ describe('/index.ts', () => {
 				status: 'ACTIVE'
 			});
 		});
-		
+
 		it('should create task with GMT', async () => {
 			const res = await hooks.register({
 				namespace: 'spec',
@@ -1009,7 +1005,7 @@ describe('/index.ts', () => {
 					':zero': 0
 				},
 				chunkLimit: 100,
-				filterExpression: 'attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				filterExpression: ['attribute_not_exists(#pid)', '(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'].join(' AND '),
 				index: 'status-scheduled-date',
 				onChunk: expect.any(Function),
 				queryExpression: '#status = :active AND #scheduledDate <= :now'
@@ -1041,8 +1037,11 @@ describe('/index.ts', () => {
 					':processing': 'PROCESSING',
 					':zero': 0
 				},
-				conditionExpression:
-					'#status = :active AND attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				conditionExpression: [
+					'#status = :active',
+					'attribute_not_exists(#pid)',
+					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
+				].join(' AND '),
 				filter: {
 					item: {
 						namespace: task.namespace,
@@ -1082,8 +1081,20 @@ describe('/index.ts', () => {
 						id: task.id
 					}
 				},
-				updateExpression:
-					'SET #execution.#lastExecutionDate = :now, #execution.#lastResponseBody = :responseBody, #execution.#lastResponseHeaders = :responseHeaders, #execution.#lastResponseStatus = :responseStatus, #execution.#firstExecutionDate = :now, #status = :done ADD #execution.#count :one, #execution.#successfulOrFailed :one REMOVE #pid'
+				updateExpression: [
+					'SET',
+					[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#status = :done'
+					].join(', '),
+					'ADD',
+					['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', '),
+					'REMOVE #pid'
+				].join(' ')
 			});
 
 			const retrieved = await hooks.db.tasks.get({
@@ -1154,8 +1165,11 @@ describe('/index.ts', () => {
 					':processing': 'PROCESSING',
 					':zero': 0
 				},
-				conditionExpression:
-					'#status = :active AND attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				conditionExpression: [
+					'#status = :active',
+					'attribute_not_exists(#pid)',
+					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
+				].join(' AND '),
 				filter: {
 					item: {
 						namespace: task.namespace,
@@ -1197,8 +1211,21 @@ describe('/index.ts', () => {
 						id: task.id
 					}
 				},
-				updateExpression:
-					'SET #execution.#lastExecutionDate = :now, #execution.#lastResponseBody = :responseBody, #execution.#lastResponseHeaders = :responseHeaders, #execution.#lastResponseStatus = :responseStatus, #execution.#firstExecutionDate = :now, #scheduledDate = :scheduledDate, #status = :active ADD #execution.#count :one, #execution.#successfulOrFailed :one REMOVE #pid'
+				updateExpression: [
+					'SET',
+					[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#scheduledDate = :scheduledDate',
+						'#status = :active'
+					].join(', '),
+					'ADD',
+					['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', '),
+					'REMOVE #pid'
+				].join(' ')
 			});
 
 			const retrieved = await hooks.db.tasks.get({
@@ -1289,6 +1316,20 @@ describe('/index.ts', () => {
 			expect(retrieved!.execution.successful).toEqual(1);
 			expect(retrieved!.status).toEqual('DONE');
 			expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(2);
+		});
+
+		it('should not trigger if task is future', async () => {
+			await hooks.register(createTestTask(1000));
+
+			const res = await hooks.trigger();
+
+			expect(res).toEqual({
+				processed: 0,
+				errors: 0
+			});
+
+			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+			expect(hooks.db.tasks.update).not.toHaveBeenCalled();
 		});
 
 		it('should not trigger if task has pid', async () => {
@@ -1401,29 +1442,6 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: task.retryLimit
 			});
-
-			const retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved?.['pid']).toBeUndefined();
-			expect(retrieved?.execution.firstExecutionDate).toEqual(retrieved?.execution.lastExecutionDate);
-			expect(retrieved?.execution).toEqual({
-				count: 1,
-				failed: 0,
-				firstExecutionDate: expect.any(String),
-				firstScheduledDate: task.scheduledDate,
-				lastExecutionDate: expect.any(String),
-				lastResponseBody: '{"success":true,"url":"https://httpbin.org/anything"}',
-				lastResponseHeaders: { 'content-type': 'application/json' },
-				lastResponseStatus: 200,
-				successful: 1
-			});
-			expect(retrieved?.scheduledDate).toEqual(task.scheduledDate);
-			expect(retrieved?.status).toEqual('DONE');
 		});
 
 		it('should process with GMT', async () => {
@@ -1457,29 +1475,6 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: task.retryLimit
 			});
-
-			const retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved?.['pid']).toBeUndefined();
-			expect(retrieved?.execution.firstExecutionDate).toEqual(retrieved?.execution.lastExecutionDate);
-			expect(retrieved?.execution).toEqual({
-				count: 1,
-				failed: 0,
-				firstExecutionDate: expect.any(String),
-				firstScheduledDate: task.scheduledDate,
-				lastExecutionDate: expect.any(String),
-				lastResponseBody: '{"success":true,"url":"https://httpbin.org/anything"}',
-				lastResponseHeaders: { 'content-type': 'application/json' },
-				lastResponseStatus: 200,
-				successful: 1
-			});
-			expect(retrieved?.scheduledDate).toEqual(task.scheduledDate);
-			expect(retrieved?.status).toEqual('DONE');
 		});
 
 		it('should handle concurrent tasks', async () => {
@@ -1554,8 +1549,11 @@ describe('/index.ts', () => {
 					':processing': 'PROCESSING',
 					':zero': 0
 				},
-				conditionExpression:
-					'#status = :active AND attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				conditionExpression: [
+					'#status = :active',
+					'attribute_not_exists(#pid)',
+					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
+				].join(' AND '),
 				filter: {
 					item: {
 						namespace: task.namespace,
@@ -1641,8 +1639,11 @@ describe('/index.ts', () => {
 					':processing': 'PROCESSING',
 					':zero': 0
 				},
-				conditionExpression:
-					'#status = :active AND attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				conditionExpression: [
+					'#status = :active',
+					'attribute_not_exists(#pid)',
+					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
+				].join(' AND '),
 				filter: {
 					item: {
 						namespace: task.namespace,

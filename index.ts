@@ -543,7 +543,7 @@ class Hooks {
 					':zero': 0
 				},
 				chunkLimit: 100,
-				filterExpression: 'attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				filterExpression: ['attribute_not_exists(#pid)', '(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'].join(' AND '),
 				index: 'status-scheduled-date',
 				onChunk: async ({ items }) => {
 					let promiseTasks: (() => Promise<void>)[] = [];
@@ -569,8 +569,11 @@ class Hooks {
 											':zero': 0
 										},
 										// in case of other process already picked the task while it was being processed
-										conditionExpression:
-											'#status = :active AND attribute_not_exists(#pid) AND (#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+										conditionExpression: [
+											'#status = :active',
+											'attribute_not_exists(#pid)',
+											'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
+										].join(' AND '),
 										filter: {
 											item: {
 												namespace: item.namespace,
