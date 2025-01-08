@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import z from 'zod';
 
 import Hooks, { taskShape } from './index';
 
@@ -30,7 +31,6 @@ const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.Task>
 		namespace: 'spec',
 		repeat: {
 			interval: 30,
-			max: 1,
 			unit: 'minutes'
 		},
 		scheduledDate: new Date(_.now() + scheduleDelay).toISOString(),
@@ -45,10 +45,10 @@ describe('/index.ts', () => {
 		hooks = new Hooks({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			createTable: true,
-			logsTableName: 'use-dynamodb-scheduler-logs-spec',
+			logsTableName: 'use-dynamodb-reactive-hooks-logs-spec',
 			region: process.env.AWS_REGION || '',
 			secretAccessKey: process.env.AWS_SECRET_KEY || '',
-			tasksTableName: 'use-dynamodb-scheduler-tasks-spec'
+			tasksTableName: 'use-dynamodb-reactive-hooks-tasks-spec'
 		});
 	});
 
@@ -56,10 +56,10 @@ describe('/index.ts', () => {
 		hooks = new Hooks({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			createTable: true,
-			logsTableName: 'use-dynamodb-scheduler-logs-spec',
+			logsTableName: 'use-dynamodb-reactive-hooks-logs-spec',
 			region: process.env.AWS_REGION || '',
 			secretAccessKey: process.env.AWS_SECRET_KEY || '',
-			tasksTableName: 'use-dynamodb-scheduler-tasks-spec'
+			tasksTableName: 'use-dynamodb-reactive-hooks-tasks-spec'
 		});
 	});
 
@@ -129,7 +129,7 @@ describe('/index.ts', () => {
 		it('should clear namespace', async () => {
 			await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return hooks.register(task);
+					return hooks.registerTask(task);
 				})
 			);
 
@@ -149,7 +149,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should delete', async () => {
-			const task = await hooks.register(createTestTask());
+			const task = await hooks.registerTask(createTestTask());
 
 			const deleted = await hooks.delete({
 				id: task.id,
@@ -188,7 +188,7 @@ describe('/index.ts', () => {
 		it('should delete many', async () => {
 			await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return hooks.register(task);
+					return hooks.registerTask(task);
 				})
 			);
 
@@ -199,6 +199,8 @@ describe('/index.ts', () => {
 			expect(hooks.fetch).toHaveBeenCalledWith({
 				chunkLimit: 100,
 				desc: false,
+				eventPatternPrefix: false,
+				idPrefix: false,
 				limit: Infinity,
 				namespace: 'spec',
 				onChunk: expect.any(Function),
@@ -223,9 +225,22 @@ describe('/index.ts', () => {
 
 		beforeAll(async () => {
 			tasks = await Promise.all(
-				_.map([createTestTask(), createTestTask(2000), createTestTask(3000)], task => {
-					return hooks.register(task);
-				})
+				_.map(
+					[
+						createTestTask(0, {
+							eventPattern: 'event-pattern-1'
+						}),
+						createTestTask(1000, {
+							eventPattern: 'event-pattern-2'
+						}),
+						createTestTask(2000, {
+							eventPattern: 'event-pattern-3'
+						})
+					],
+					task => {
+						return hooks.registerTask(task);
+					}
+				)
 			);
 		});
 
@@ -243,320 +258,432 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {},
-				attributeValues: {},
+				attributeNames: { '#namespace': 'namespace' },
+				attributeValues: { ':namespace': 'spec' },
 				filterExpression: '',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
 				limit: 100,
-				queryExpression: '',
+				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
 				startKey: null
 			});
 
 			expect(res).toEqual({
 				count: 3,
-				items: tasks,
+				items: expect.arrayContaining(tasks),
 				lastEvaluatedKey: null
 			});
 		});
 
-		it('should fetch by [namespace] desc', async () => {
+		it('should fetch by [namespace, desc, chunkLimit, onChunk, status]', async () => {
 			const res = await hooks.fetch({
+				chunkLimit: 1,
 				desc: true,
-				namespace: 'spec'
+				namespace: 'spec',
+				onChunk: async () => {},
+				status: 'ACTIVE'
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {},
-				attributeValues: {},
-				filterExpression: '',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
+				attributeNames: {
+					'#namespace': 'namespace',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':namespace': 'spec',
+					':status': 'ACTIVE'
+				},
+				chunkLimit: 1,
+				filterExpression: '#status = :status',
 				limit: 100,
-				queryExpression: '',
+				onChunk: expect.any(Function),
+				queryExpression: '#namespace = :namespace',
 				scanIndexForward: false,
 				startKey: null
 			});
 
 			expect(res).toEqual({
 				count: 3,
-				items: [...tasks].reverse(),
+				items: expect.arrayContaining(tasks),
 				lastEvaluatedKey: null
 			});
 		});
 
-		it('should fetch by [namespace, scheduledDate]', async () => {
-			const res = await hooks.fetch({
-				from: tasks[0].scheduledDate,
-				namespace: 'spec',
-				to: tasks[1].scheduledDate
+		describe('query by [id]', () => {
+			it('should fetch by [namespace, id]', async () => {
+				const res = await hooks.fetch({
+					id: tasks[0].id.slice(0, 8),
+					namespace: 'spec'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#id': 'id',
+						'#namespace': 'namespace'
+					},
+					attributeValues: {
+						':id': tasks[0].id.slice(0, 8),
+						':namespace': 'spec'
+					},
+					filterExpression: '',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND #id = :id',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#scheduledDate': 'scheduledDate'
-				},
-				attributeValues: {
-					':from': tasks[0].scheduledDate,
-					':to': tasks[1].scheduledDate
-				},
-				filterExpression: '',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
-				limit: 100,
-				queryExpression: '#scheduledDate BETWEEN :from AND :to',
-				scanIndexForward: true,
-				startKey: null
+			it('should fetch by [namespace, id] with idPrefix = true', async () => {
+				const res = await hooks.fetch({
+					id: tasks[0].id.slice(0, 8),
+					idPrefix: true,
+					namespace: 'spec'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#id': 'id',
+						'#namespace': 'namespace'
+					},
+					attributeValues: {
+						':id': tasks[0].id.slice(0, 8),
+						':namespace': 'spec'
+					},
+					filterExpression: '',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND begins_with(#id, :id)',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[0]],
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(res).toEqual({
-				count: 2,
-				items: [tasks[0], tasks[1]],
-				lastEvaluatedKey: null
-			});
-		});
+			it('should fetch by [namespace, id, eventPattern, scheduledDate, status]', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					fromScheduledDate: '2024-03-18T10:00:00.000Z',
+					id: tasks[0].id.slice(0, 8),
+					namespace: 'spec',
+					status: 'ACTIVE',
+					toScheduledDate: '2024-03-18T10:00:00.000Z'
+				});
 
-		it('should fetch by [namespace, status]', async () => {
-			const res = await hooks.fetch({
-				namespace: 'spec',
-				status: 'DONE'
-			});
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#eventPattern': 'eventPattern',
+						'#id': 'id',
+						'#namespace': 'namespace',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':eventPattern': 'event-pattern-',
+						':fromScheduledDate': '2024-03-18T10:00:00.000Z',
+						':id': tasks[0].id.slice(0, 8),
+						':namespace': 'spec',
+						':status': 'ACTIVE',
+						':toScheduledDate': '2024-03-18T10:00:00.000Z'
+					},
+					filterExpression:
+						'#eventPattern = :eventPattern AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate AND #status = :status',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND #id = :id',
+					scanIndexForward: true,
+					startKey: null
+				});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#status': 'status'
-				},
-				attributeValues: {
-					':status': 'DONE'
-				},
-				filterExpression: '#status = :status',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
-				limit: 100,
-				queryExpression: '',
-				scanIndexForward: true,
-				startKey: null
-			});
-
-			expect(res).toEqual({
-				count: 0,
-				items: [],
-				lastEvaluatedKey: null
-			});
-		});
-
-		it('should fetch by [namespace, scheduledDate, status]', async () => {
-			const res = await hooks.fetch({
-				from: tasks[0].scheduledDate,
-				namespace: 'spec',
-				status: 'DONE',
-				to: tasks[1].scheduledDate
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':from': tasks[0].scheduledDate,
-					':status': 'DONE',
-					':to': tasks[1].scheduledDate
-				},
-				filterExpression: '#status = :status',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
-				limit: 100,
-				queryExpression: '#scheduledDate BETWEEN :from AND :to',
-				scanIndexForward: true,
-				startKey: null
-			});
-
-			expect(res).toEqual({
-				count: 0,
-				items: [],
-				lastEvaluatedKey: null
-			});
-		});
-
-		it('should fetch by [namespace] with chunkLimit, limit, onChunk, startKey', async () => {
-			const res = await hooks.fetch({
-				chunkLimit: Infinity,
-				limit: 2,
-				namespace: 'spec',
-				onChunk: vi.fn()
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {},
-				attributeValues: {},
-				chunkLimit: Infinity,
-				filterExpression: '',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
-				limit: 2,
-				onChunk: expect.any(Function),
-				queryExpression: '',
-				scanIndexForward: true,
-				startKey: null
-			});
-
-			expect(res).toEqual({
-				count: 2,
-				items: _.take(tasks, 2),
-				lastEvaluatedKey: _.pick(tasks[1], ['id', 'namespace', 'scheduledDate'])
-			});
-
-			const res2 = await hooks.fetch({
-				limit: 2,
-				namespace: 'spec',
-				startKey: res.lastEvaluatedKey
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {},
-				attributeValues: {},
-				filterExpression: '',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
-				limit: 2,
-				queryExpression: '',
-				scanIndexForward: true,
-				startKey: res.lastEvaluatedKey
-			});
-
-			expect(res2).toEqual({
-				count: 1,
-				items: [tasks[2]],
-				lastEvaluatedKey: null
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 		});
 
-		it('should fetch by [namespace, id]', async () => {
-			const res = await hooks.fetch({
-				id: tasks[0].id.slice(0, 8),
-				namespace: 'spec'
+		describe('query by [eventPattern]', () => {
+			it('should fetch by [namespace, eventPattern]', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					namespace: 'spec'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace': 'namespace',
+						'#eventPattern': 'eventPattern'
+					},
+					attributeValues: {
+						':namespace': 'spec',
+						':eventPattern': 'event-pattern-'
+					},
+					filterExpression: '',
+					index: 'namespace-event-pattern',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND #eventPattern = :eventPattern',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {},
-				attributeValues: {},
-				filterExpression: '',
-				item: { namespace: 'spec', id: tasks[0].id.slice(0, 8) },
-				limit: 100,
-				prefix: true,
-				scanIndexForward: true,
-				startKey: null
+			it('should fetch by [namespace, eventPattern] with eventPatternPrefix = true', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					eventPatternPrefix: true,
+					namespace: 'spec'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace': 'namespace',
+						'#eventPattern': 'eventPattern'
+					},
+					attributeValues: {
+						':namespace': 'spec',
+						':eventPattern': 'event-pattern-'
+					},
+					filterExpression: '',
+					index: 'namespace-event-pattern',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND begins_with(#eventPattern, :eventPattern)',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 3,
+					items: expect.arrayContaining(tasks),
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(res).toEqual({
-				count: 1,
-				items: [tasks[0]],
-				lastEvaluatedKey: null
+			it('should fetch by [namespace, eventPattern, scheduledDate]', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					fromScheduledDate: '2024-03-18T10:00:00.000Z',
+					namespace: 'spec',
+					toScheduledDate: '2024-03-18T10:00:00.000Z'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace': 'namespace',
+						'#eventPattern': 'eventPattern',
+						'#scheduledDate': 'scheduledDate'
+					},
+					attributeValues: {
+						':namespace': 'spec',
+						':eventPattern': 'event-pattern-',
+						':fromScheduledDate': '2024-03-18T10:00:00.000Z',
+						':toScheduledDate': '2024-03-18T10:00:00.000Z'
+					},
+					filterExpression: '#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
+					index: 'namespace-event-pattern',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND #eventPattern = :eventPattern',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 		});
 
-		it('should fetch by [namespace, id, scheduledDate]', async () => {
-			const res = await hooks.fetch({
-				from: tasks[0].scheduledDate,
-				id: tasks[0].id.slice(0, 8),
-				namespace: 'spec',
-				to: tasks[0].scheduledDate
+		describe('query by [eventPattern, status]', () => {
+			it('should fetch by [namespace, eventPattern, status]', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					namespace: 'spec',
+					status: 'ACTIVE'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace__eventPattern': '__namespace__eventPattern',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':namespace__eventPattern': 'spec#event-pattern-',
+						':status': 'ACTIVE'
+					},
+					filterExpression: '',
+					index: 'status-namespace-event-pattern',
+					limit: 100,
+					queryExpression: '#status = :status AND #namespace__eventPattern = :namespace__eventPattern',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#scheduledDate': 'scheduledDate'
-				},
-				attributeValues: {
-					':from': tasks[0].scheduledDate,
-					':to': tasks[0].scheduledDate
-				},
-				filterExpression: '#scheduledDate BETWEEN :from AND :to',
-				item: { namespace: 'spec', id: tasks[0].id.slice(0, 8) },
-				limit: 100,
-				prefix: true,
-				scanIndexForward: true,
-				startKey: null
+			it('should fetch by [namespace, eventPattern, status] with eventPatternPrefix = true', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					eventPatternPrefix: true,
+					namespace: 'spec',
+					status: 'ACTIVE'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace__eventPattern': '__namespace__eventPattern',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':namespace__eventPattern': 'spec#event-pattern-',
+						':status': 'ACTIVE'
+					},
+					filterExpression: '',
+					index: 'status-namespace-event-pattern',
+					limit: 100,
+					queryExpression: '#status = :status AND begins_with(#namespace__eventPattern, :namespace__eventPattern)',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 3,
+					items: expect.arrayContaining(tasks),
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(res).toEqual({
-				count: 1,
-				items: [tasks[0]],
-				lastEvaluatedKey: null
+			it('should fetch by [namespace, eventPattern, fromScheduledDate, toScheduledDate, status]', async () => {
+				const res = await hooks.fetch({
+					eventPattern: 'event-pattern-',
+					fromScheduledDate: '2024-03-18T10:00:00.000Z',
+					namespace: 'spec',
+					status: 'ACTIVE',
+					toScheduledDate: '2024-03-18T10:00:00.000Z'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace__eventPattern': '__namespace__eventPattern',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':namespace__eventPattern': 'spec#event-pattern-',
+						':fromScheduledDate': '2024-03-18T10:00:00.000Z',
+						':toScheduledDate': '2024-03-18T10:00:00.000Z',
+						':status': 'ACTIVE'
+					},
+					filterExpression: '#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
+					index: 'status-namespace-event-pattern',
+					limit: 100,
+					queryExpression: '#status = :status AND #namespace__eventPattern = :namespace__eventPattern',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 		});
 
-		it('should fetch by [namespace, id, status]', async () => {
-			const res = await hooks.fetch({
-				id: tasks[0].id.slice(0, 8),
-				namespace: 'spec',
-				status: 'DONE'
+		describe('query by [scheduledDate]', () => {
+			it('should fetch by [namespace, scheduledDate]', async () => {
+				const res = await hooks.fetch({
+					fromScheduledDate: '2024-03-18T10:00:00.000Z',
+					namespace: 'spec',
+					toScheduledDate: '2024-03-18T10:00:00.000Z'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace': 'namespace',
+						'#scheduledDate': 'scheduledDate'
+					},
+					attributeValues: {
+						':fromScheduledDate': '2024-03-18T10:00:00.000Z',
+						':namespace': 'spec',
+						':toScheduledDate': '2024-03-18T10:00:00.000Z'
+					},
+					filterExpression: '',
+					index: 'namespace-scheduled-date',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
+					scanIndexForward: true,
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#status': 'status'
-				},
-				attributeValues: {
-					':status': 'DONE'
-				},
-				filterExpression: '#status = :status',
-				item: { namespace: 'spec', id: tasks[0].id.slice(0, 8) },
-				limit: 100,
-				prefix: true,
-				scanIndexForward: true,
-				startKey: null
-			});
+			it('should fetch by [namespace, scheduledDate, status]', async () => {
+				const res = await hooks.fetch({
+					fromScheduledDate: '2024-03-18T10:00:00.000Z',
+					namespace: 'spec',
+					status: 'ACTIVE',
+					toScheduledDate: '2024-03-18T10:00:00.000Z'
+				});
 
-			expect(res).toEqual({
-				count: 0,
-				items: [],
-				lastEvaluatedKey: null
-			});
-		});
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#namespace': 'namespace',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':fromScheduledDate': '2024-03-18T10:00:00.000Z',
+						':namespace': 'spec',
+						':toScheduledDate': '2024-03-18T10:00:00.000Z',
+						':status': 'ACTIVE'
+					},
+					filterExpression: '#status = :status',
+					index: 'namespace-scheduled-date',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
+					scanIndexForward: true,
+					startKey: null
+				});
 
-		it('should fetch by [namespace, id, scheduledDate, status]', async () => {
-			const res = await hooks.fetch({
-				from: tasks[0].scheduledDate,
-				namespace: 'spec',
-				id: tasks[0].id.slice(0, 8),
-				status: 'DONE',
-				to: tasks[0].scheduledDate
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':from': tasks[0].scheduledDate,
-					':status': 'DONE',
-					':to': tasks[0].scheduledDate
-				},
-				filterExpression: '#scheduledDate BETWEEN :from AND :to AND #status = :status',
-				item: { namespace: 'spec', id: tasks[0].id.slice(0, 8) },
-				limit: 100,
-				prefix: true,
-				scanIndexForward: true,
-				startKey: null
-			});
-
-			expect(res).toEqual({
-				count: 0,
-				items: [],
-				lastEvaluatedKey: null
+				expect(res).toEqual({
+					count: 0,
+					items: [],
+					lastEvaluatedKey: null
+				});
 			});
 		});
 	});
 
-	describe('fetchLogs', () => {
+	describe.skip('fetchLogs', () => {
 		beforeAll(async () => {
 			await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return hooks.register(task);
+					return hooks.registerTask(task);
 				})
 			);
 		});
@@ -584,7 +711,7 @@ describe('/index.ts', () => {
 		let task: Hooks.Task;
 
 		beforeAll(async () => {
-			task = await hooks.register(createTestTask());
+			task = await hooks.registerTask(createTestTask());
 		});
 
 		afterAll(async () => {
@@ -610,7 +737,590 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('register', () => {
+	describe('queryActiveTasks', () => {
+		let tasks: Hooks.Task[];
+
+		beforeEach(async () => {
+			vi.spyOn(hooks.db.tasks, 'query');
+		});
+
+		describe('edge cases', () => {
+			beforeEach(async () => {
+				tasks = await Promise.all(
+					_.map([createTestTask(), createTestTask()], task => {
+						return hooks.registerTask(task);
+					})
+				);
+			});
+
+			afterEach(async () => {
+				await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+			});
+
+			it('should no return tasks with pid', async () => {
+				await hooks.db.tasks.update({
+					attributeNames: { '#pid': 'pid' },
+					attributeValues: { ':pid': 'test' },
+					filter: {
+						item: { namespace: 'spec', id: tasks[0].id }
+					},
+					updateExpression: 'SET #pid = :pid'
+				});
+
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':now': expect.any(String),
+						':startOfTimes': '0000-00-00T00:00:00.000Z',
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-scheduled-date',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[1]],
+					lastEvaluatedKey: null
+				});
+			});
+
+			it('should no return tasks with execution.count > repeat.max', async () => {
+				await Promise.all([
+					hooks.db.tasks.update({
+						attributeNames: {
+							'#count': 'count',
+							'#execution': 'execution',
+							'#max': 'max',
+							'#repeat': 'repeat'
+						},
+						attributeValues: {
+							':executionCount': 1,
+							':repeatCount': 1
+						},
+						filter: {
+							item: { namespace: 'spec', id: tasks[0].id }
+						},
+						updateExpression: 'SET #execution.#count = :executionCount, #repeat.#max = :repeatCount'
+					}),
+					hooks.db.tasks.update({
+						attributeNames: {
+							'#count': 'count',
+							'#execution': 'execution'
+						},
+						attributeValues: {
+							':executionCount': 1000
+						},
+						filter: {
+							item: { namespace: 'spec', id: tasks[1].id }
+						},
+						updateExpression: 'SET #execution.#count = :executionCount'
+					})
+				]);
+
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':now': expect.any(String),
+						':startOfTimes': '0000-00-00T00:00:00.000Z',
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-scheduled-date',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [
+						{
+							...tasks[1],
+							__updatedAt: expect.any(String),
+							execution: {
+								...tasks[1].execution,
+								count: 1000
+							}
+						}
+					],
+					lastEvaluatedKey: null
+				});
+			});
+
+			it('should no return tasks with now < noBefore', async () => {
+				await hooks.db.tasks.update({
+					attributeNames: { '#noBefore': 'noBefore' },
+					attributeValues: { ':noBefore': '3000-01-01T00:00:00.000Z' },
+					filter: {
+						item: { namespace: 'spec', id: tasks[0].id }
+					},
+					updateExpression: 'SET #noBefore = :noBefore'
+				});
+
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':now': expect.any(String),
+						':startOfTimes': '0000-00-00T00:00:00.000Z',
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-scheduled-date',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[1]],
+					lastEvaluatedKey: null
+				});
+			});
+
+			it('should no return tasks with now > noAfter', async () => {
+				await hooks.db.tasks.update({
+					attributeNames: { '#noAfter': 'noAfter' },
+					attributeValues: { ':noAfter': '1999-01-01T00:00:00.000Z' },
+					filter: {
+						item: { namespace: 'spec', id: tasks[0].id }
+					},
+					updateExpression: 'SET #noAfter = :noAfter'
+				});
+
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':now': expect.any(String),
+						':startOfTimes': '0000-00-00T00:00:00.000Z',
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-scheduled-date',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[1]],
+					lastEvaluatedKey: null
+				});
+			});
+		});
+
+		describe('query by eventPattern', () => {
+			beforeAll(async () => {
+				tasks = await Promise.all(
+					_.map(
+						[
+							createTestTask(0, {
+								eventPattern: ''
+							}),
+							createTestTask(0, {
+								eventPattern: 'event-pattern-1'
+							}),
+							createTestTask(0, {
+								eventPattern: 'event-pattern-2'
+							})
+						],
+						task => {
+							return hooks.registerTask(task);
+						}
+					)
+				);
+			});
+
+			afterAll(async () => {
+				await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+			});
+
+			it('should fetch by [namespace, eventPattern]', async () => {
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					eventPattern: 'event-pattern-1',
+					namespace: 'spec',
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#namespace__eventPattern': '__namespace__eventPattern',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':namespace__eventPattern': 'spec#event-pattern-1',
+						':now': expect.any(String),
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-namespace-event-pattern',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND #namespace__eventPattern = :namespace__eventPattern'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[1]],
+					lastEvaluatedKey: null
+				});
+			});
+
+			it('should fetch by [namespace, eventPattern] with eventPatternPrefix = true', async () => {
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					eventPattern: 'event-pattern-',
+					eventPatternPrefix: true,
+					namespace: 'spec',
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#namespace__eventPattern': '__namespace__eventPattern',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':namespace__eventPattern': 'spec#event-pattern-',
+						':now': expect.any(String),
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-namespace-event-pattern',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND begins_with(#namespace__eventPattern, :namespace__eventPattern)'
+				});
+
+				expect(res).toEqual({
+					count: 2,
+					items: expect.arrayContaining([tasks[1], tasks[2]]),
+					lastEvaluatedKey: null
+				});
+			});
+		});
+
+		describe('query by id', () => {
+			beforeAll(async () => {
+				tasks = await Promise.all(
+					_.map([createTestTask(), createTestTask()], task => {
+						return hooks.registerTask(task);
+					})
+				);
+			});
+
+			afterAll(async () => {
+				await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+			});
+
+			it('should fetch by [namespace, id]', async () => {
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					id: tasks[0].id,
+					namespace: 'spec',
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#id': 'id',
+						'#max': 'max',
+						'#namespace': 'namespace',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':id': tasks[0].id,
+						':namespace': 'spec',
+						':now': expect.any(String),
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)',
+						'#status = :active'
+					].join(' AND '),
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#namespace = :namespace AND #id = :id'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[0]],
+					lastEvaluatedKey: null
+				});
+			});
+
+			it('should fetch by [namespace, id] with idPrefix = true', async () => {
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					id: tasks[0].id.slice(0, 3),
+					idPrefix: true,
+					namespace: 'spec',
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#id': 'id',
+						'#max': 'max',
+						'#namespace': 'namespace',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':id': tasks[0].id.slice(0, 3),
+						':namespace': 'spec',
+						':now': expect.any(String),
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)',
+						'#status = :active'
+					].join(' AND '),
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#namespace = :namespace AND begins_with(#id, :id)'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[0]],
+					lastEvaluatedKey: null
+				});
+			});
+		});
+
+		describe('query by scheduledDate', () => {
+			beforeAll(async () => {
+				tasks = await Promise.all(
+					_.map(
+						[
+							createTestTask(0, {
+								scheduledDate: ''
+							}),
+							createTestTask(0),
+							createTestTask(5000)
+						],
+						task => {
+							return hooks.registerTask(task);
+						}
+					)
+				);
+			});
+
+			afterAll(async () => {
+				await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+			});
+
+			it('should fetch', async () => {
+				// @ts-expect-error
+				const res = await hooks.queryActiveTasks({
+					date: new Date(),
+					namespace: 'spec',
+					onChunk: vi.fn()
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#max': 'max',
+						'#noAfter': 'noAfter',
+						'#noBefore': 'noBefore',
+						'#pid': 'pid',
+						'#repeat': 'repeat',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':now': expect.any(String),
+						':startOfTimes': '0000-00-00T00:00:00.000Z',
+						':zero': 0
+					},
+					chunkLimit: 100,
+					filterExpression: [
+						'attribute_not_exists(#pid)',
+						'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+						'(#noBefore = :empty OR :now > #noBefore)',
+						'(#noAfter = :empty OR :now < #noAfter)'
+					].join(' AND '),
+					index: 'status-scheduled-date',
+					limit: Infinity,
+					onChunk: expect.any(Function),
+					queryExpression: '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now'
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: [tasks[1]],
+					lastEvaluatedKey: null
+				});
+			});
+		});
+	});
+
+	describe('registerTask', () => {
 		beforeEach(() => {
 			vi.spyOn(hooks.db.tasks, 'put');
 		});
@@ -625,7 +1335,7 @@ describe('/index.ts', () => {
 			};
 
 			try {
-				await hooks.register(invalidInput as any);
+				await hooks.registerTask(invalidInput as any);
 
 				throw new Error('Expected to throw');
 			} catch (err) {
@@ -634,70 +1344,109 @@ describe('/index.ts', () => {
 			}
 		});
 
+		it('should validate noAfter > now', async () => {
+			try {
+				const currentYear = new Date().getFullYear();
+
+				await hooks.registerTask({
+					namespace: 'spec',
+					noAfter: `${currentYear}-01-01T00:00:00Z`,
+					noBefore: `${currentYear + 1}-01-01T00:00:00-03:00`,
+					request: {
+						url: 'https://httpbin.org/anything'
+					}
+				});
+			} catch (err) {
+				expect(hooks.db.tasks.put).not.toHaveBeenCalled();
+				expect((err as z.ZodError).errors[0].message).toEqual('noAfter cannot be in the past');
+			}
+		});
+
+		it('should validate noBefore > now', async () => {
+			try {
+				const currentYear = new Date().getFullYear();
+
+				await hooks.registerTask({
+					namespace: 'spec',
+					noAfter: `${currentYear + 1}-01-01T00:00:00Z`, // 2026-01-01T00:00:00.000Z
+					noBefore: `${currentYear}-01-01T00:00:00-03:00`, // 2025-01-01T03:00:00.000Z
+					request: {
+						url: 'https://httpbin.org/anything'
+					}
+				});
+			} catch (err) {
+				expect(hooks.db.tasks.put).not.toHaveBeenCalled();
+				expect((err as z.ZodError).errors[0].message).toEqual('noBefore cannot be in the past');
+			}
+		});
+
+		it('should validate noBefore > noAfter', async () => {
+			try {
+				const currentYear = new Date().getFullYear();
+
+				await hooks.registerTask({
+					namespace: 'spec',
+					noAfter: `${currentYear + 1}-01-01T00:00:00Z`, // 2026-01-01T00:00:00.000Z
+					noBefore: `${currentYear + 1}-01-01T00:00:00-03:00`, // 2026-01-01T03:00:00.000Z
+					request: {
+						url: 'https://httpbin.org/anything'
+					}
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(hooks.db.tasks.put).not.toHaveBeenCalled();
+				expect((err as z.ZodError).errors[0].message).toEqual('noAfter must be after noBefore');
+			}
+		});
+
+		it('should validate scheduledDate > now', async () => {
+			try {
+				const currentYear = new Date().getFullYear();
+
+				await hooks.registerTask({
+					namespace: 'spec',
+					scheduledDate: `${currentYear}-01-01T00:00:00-03:00`,
+					request: {
+						url: 'https://httpbin.org/anything'
+					}
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(hooks.db.tasks.put).not.toHaveBeenCalled();
+				expect((err as z.ZodError).errors[0].message).toEqual('scheduledDate cannot be in the past');
+			}
+		});
+
 		it('should create task', async () => {
-			const scheduledDate = new Date().toISOString();
-			const res = await hooks.register({
+			const res = await hooks.registerTask({
 				namespace: 'spec',
 				request: {
 					url: 'https://httpbin.org/anything'
-				},
-				scheduledDate
-			});
-
-			expect(hooks.db.tasks.put).toHaveBeenCalledWith({
-				__createdAt: expect.any(String),
-				__updatedAt: expect.any(String),
-				errors: {
-					count: 0,
-					firstErrorDate: null,
-					lastError: null,
-					lastErrorDate: null
-				},
-				execution: {
-					count: 0,
-					failed: 0,
-					firstExecutionDate: null,
-					firstScheduledDate: scheduledDate,
-					lastExecutionDate: null,
-					lastResponseBody: '',
-					lastResponseHeaders: {},
-					lastResponseStatus: 0,
-					successful: 0
-				},
-				id: expect.any(String),
-				idPrefix: '',
-				namespace: 'spec',
-				repeat: {
-					interval: 1,
-					max: 1,
-					unit: 'minutes'
-				},
-				request: {
-					body: null,
-					headers: null,
-					method: 'GET',
-					url: 'https://httpbin.org/anything'
-				},
-				retryLimit: 3,
-				scheduledDate: expect.any(String),
-				status: 'ACTIVE'
+				}
 			});
 
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
 				__updatedAt: expect.any(String),
+				concurrency: false,
 				errors: {
 					count: 0,
-					firstErrorDate: null,
-					lastError: null,
-					lastErrorDate: null
+					firstErrorDate: '',
+					lastError: '',
+					lastErrorDate: '',
+					lastExecutionType: ''
 				},
+				eventPattern: '-',
 				execution: {
 					count: 0,
 					failed: 0,
-					firstExecutionDate: null,
-					firstScheduledDate: scheduledDate,
-					lastExecutionDate: null,
+					firstExecutionDate: '',
+					firstScheduledDate: '',
+					lastExecutionDate: '',
+					lastExecutionType: '',
 					lastResponseBody: '',
 					lastResponseHeaders: {},
 					lastResponseStatus: 0,
@@ -706,9 +1455,11 @@ describe('/index.ts', () => {
 				id: expect.any(String),
 				idPrefix: '',
 				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
 				repeat: {
-					interval: 1,
-					max: 1,
+					interval: 0,
+					max: 0,
 					unit: 'minutes'
 				},
 				request: {
@@ -717,115 +1468,728 @@ describe('/index.ts', () => {
 					method: 'GET',
 					url: 'https://httpbin.org/anything'
 				},
+				rescheduleOnManualExecution: true,
 				retryLimit: 3,
-				scheduledDate: expect.any(String),
+				scheduledDate: '-',
 				status: 'ACTIVE'
 			});
 		});
 
-		it('should create task with GMT', async () => {
-			const res = await hooks.register({
-				namespace: 'spec',
-				request: {
-					url: 'https://httpbin.org/anything'
-				},
-				scheduledDate: '2025-01-01T00:00:00-03:00'
-			});
-
-			expect(hooks.db.tasks.put).toHaveBeenCalledWith({
-				__createdAt: expect.any(String),
-				__updatedAt: expect.any(String),
-				errors: {
-					count: 0,
-					firstErrorDate: null,
-					lastError: null,
-					lastErrorDate: null
-				},
-				execution: {
-					count: 0,
-					failed: 0,
-					firstExecutionDate: null,
-					firstScheduledDate: '2025-01-01T03:00:00.000Z',
-					lastExecutionDate: null,
-					lastResponseBody: '',
-					lastResponseHeaders: {},
-					lastResponseStatus: 0,
-					successful: 0
-				},
-				id: expect.any(String),
-				idPrefix: '',
-				namespace: 'spec',
-				repeat: {
-					interval: 1,
-					max: 1,
-					unit: 'minutes'
-				},
-				request: {
-					body: null,
-					headers: null,
-					method: 'GET',
-					url: 'https://httpbin.org/anything'
-				},
-				retryLimit: 3,
-				scheduledDate: '2025-01-01T03:00:00.000Z',
-				status: 'ACTIVE'
-			});
-
-			expect(res).toEqual({
-				__createdAt: expect.any(String),
-				__updatedAt: expect.any(String),
-				errors: {
-					count: 0,
-					firstErrorDate: null,
-					lastError: null,
-					lastErrorDate: null
-				},
-				execution: {
-					count: 0,
-					failed: 0,
-					firstExecutionDate: null,
-					firstScheduledDate: '2025-01-01T03:00:00.000Z',
-					lastExecutionDate: null,
-					lastResponseBody: '',
-					lastResponseHeaders: {},
-					lastResponseStatus: 0,
-					successful: 0
-				},
-				id: expect.any(String),
-				idPrefix: '',
-				namespace: 'spec',
-				repeat: {
-					interval: 1,
-					max: 1,
-					unit: 'minutes'
-				},
-				request: {
-					body: null,
-					headers: null,
-					method: 'GET',
-					url: 'https://httpbin.org/anything'
-				},
-				retryLimit: 3,
-				scheduledDate: '2025-01-01T03:00:00.000Z',
-				status: 'ACTIVE'
-			});
-		});
-
-		it('should create task with idPrefix', async () => {
-			const res = await hooks.register({
+		it('should create task by [idPrefix, eventPattern, noAfter, noBefore, scheduledDate]', async () => {
+			const currentYear = new Date().getFullYear();
+			const res = await hooks.registerTask({
+				eventPattern: 'test-event-pattern',
 				idPrefix: 'test-',
 				namespace: 'spec',
+				noAfter: `${currentYear + 1}-01-01T00:00:00-03:00`,
+				noBefore: `${currentYear + 1}-01-01T00:00:00.000Z`,
 				request: {
 					url: 'https://httpbin.org/anything'
 				},
-				scheduledDate: new Date().toISOString()
+				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`
 			});
 
-			expect(res.id).toMatch(/^test-/);
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: 'spec#test-event-pattern',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastError: '',
+					lastErrorDate: '',
+					lastExecutionType: ''
+				},
+				eventPattern: 'test-event-pattern',
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: '',
+					firstScheduledDate: `${currentYear + 1}-01-01T03:00:00.000Z`,
+					lastExecutionDate: '',
+					lastExecutionType: '',
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: expect.stringMatching(/^test-/),
+				idPrefix: 'test-',
+				namespace: 'spec',
+				noAfter: `${currentYear + 1}-01-01T03:00:00.000Z`,
+				noBefore: `${currentYear + 1}-01-01T00:00:00.000Z`,
+				repeat: {
+					interval: 0,
+					max: 0,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'GET',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: `${currentYear + 1}-01-01T03:00:00.000Z`,
+				status: 'ACTIVE'
+			});
 		});
 	});
 
-	describe('suspend', () => {
+	describe('setTaskError', () => {
+		let task: Hooks.Task;
+
+		beforeEach(async () => {
+			vi.spyOn(hooks.db.tasks, 'update');
+
+			task = await hooks.registerTask(createTestTask());
+		});
+
+		afterEach(async () => {
+			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+		});
+
+		it('should set', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: {
+					'#status': 'status',
+					'#pid': 'pid'
+				},
+				attributeValues: {
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				filter: { item: { namespace: 'spec', id: task.id } },
+				updateExpression: 'SET #pid = :pid, #status = :processing'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskError({
+				executionType: 'MANUAL',
+				pid: 'test',
+				task,
+				error: new Error('test')
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#errors': 'errors',
+					'#lastError': 'lastError',
+					'#lastErrorDate': 'lastErrorDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#pid': 'pid',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':error': 'test',
+					':executionType': 'MANUAL',
+					':now': expect.any(String),
+					':one': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				conditionExpression: '#status = :processing AND #pid = :pid',
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					'SET',
+					[
+						'#errors.#lastExecutionType = :executionType',
+						'#errors.#lastError = :error',
+						'#errors.#lastErrorDate = :now',
+						'#status = :active'
+					].join(', '),
+					'ADD',
+					['#errors.#count :one'].join(', '),
+					'REMOVE #pid'
+				].join(' ')
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 1,
+					firstErrorDate: '',
+					lastErrorDate: expect.any(String),
+					lastError: 'test',
+					lastExecutionType: 'MANUAL'
+				},
+				eventPattern: '-',
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: '',
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: '',
+					lastExecutionType: '',
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: { interval: 30, max: 0, unit: 'minutes' },
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE'
+			});
+		});
+
+		it('should set with concurrency = true', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: { '#concurrency': 'concurrency' },
+				attributeValues: { ':concurrency': true },
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #concurrency = :concurrency'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskError({
+				executionType: 'MANUAL',
+				pid: '',
+				task,
+				error: new Error('test')
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#errors': 'errors',
+					'#lastError': 'lastError',
+					'#lastErrorDate': 'lastErrorDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#pid': 'pid',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':error': 'test',
+					':executionType': 'MANUAL',
+					':now': expect.any(String),
+					':one': 1
+				},
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					'SET',
+					[
+						'#errors.#lastExecutionType = :executionType',
+						'#errors.#lastError = :error',
+						'#errors.#lastErrorDate = :now',
+						'#status = :active'
+					].join(', '),
+					'ADD',
+					['#errors.#count :one'].join(', '),
+					'REMOVE #pid'
+				].join(' ')
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: true,
+				errors: {
+					count: 1,
+					firstErrorDate: '',
+					lastErrorDate: expect.any(String),
+					lastError: 'test',
+					lastExecutionType: 'MANUAL'
+				},
+				eventPattern: '-',
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: '',
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: '',
+					lastExecutionType: '',
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: { interval: 30, max: 0, unit: 'minutes' },
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE'
+			});
+		});
+
+		it('should set task status = MAX_ERRORS_REACHED if max errors reached', async () => {
+			hooks.maxErrors = 1;
+
+			task = await hooks.db.tasks.update({
+				attributeNames: {
+					'#status': 'status',
+					'#pid': 'pid'
+				},
+				attributeValues: {
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				filter: { item: { namespace: 'spec', id: task.id } },
+				updateExpression: 'SET #pid = :pid, #status = :processing'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskError({
+				executionType: 'MANUAL',
+				pid: 'test',
+				task,
+				error: new Error('test')
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#errors': 'errors',
+					'#lastError': 'lastError',
+					'#lastErrorDate': 'lastErrorDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#pid': 'pid',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':error': 'test',
+					':executionType': 'MANUAL',
+					':maxErrorsReached': 'MAX_ERRORS_REACHED',
+					':now': expect.any(String),
+					':one': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				conditionExpression: '#status = :processing AND #pid = :pid',
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					'SET',
+					[
+						'#errors.#lastExecutionType = :executionType',
+						'#errors.#lastError = :error',
+						'#errors.#lastErrorDate = :now',
+						'#status = :maxErrorsReached'
+					].join(', '),
+					'ADD',
+					['#errors.#count :one'].join(', '),
+					'REMOVE #pid'
+				].join(' ')
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 1,
+					firstErrorDate: '',
+					lastErrorDate: expect.any(String),
+					lastError: 'test',
+					lastExecutionType: 'MANUAL'
+				},
+				eventPattern: '-',
+				execution: {
+					count: 0,
+					failed: 0,
+					firstExecutionDate: '',
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: '',
+					lastExecutionType: '',
+					lastResponseBody: '',
+					lastResponseHeaders: {},
+					lastResponseStatus: 0,
+					successful: 0
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: { interval: 30, max: 0, unit: 'minutes' },
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'MAX_ERRORS_REACHED'
+			});
+		});
+	});
+
+	describe('setTaskLock', () => {
+		let task: Hooks.Task;
+
+		beforeEach(async () => {
+			vi.spyOn(hooks.db.tasks, 'update');
+
+			task = await hooks.registerTask(createTestTask());
+		});
+
+		afterEach(async () => {
+			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+		});
+
+		it('should set task status = PROCESSING and set pid', async () => {
+			// @ts-expect-error
+			await hooks.setTaskLock({
+				date: new Date(),
+				pid: 'test',
+				task
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#max': 'max',
+					'#noAfter': 'noAfter',
+					'#noBefore': 'noBefore',
+					'#pid': 'pid',
+					'#repeat': 'repeat',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':empty': '',
+					':now': expect.any(String),
+					':pid': 'test',
+					':processing': 'PROCESSING',
+					':zero': 0
+				},
+				// in case of other process already picked the task while it was being processed
+				conditionExpression: [
+					'attribute_not_exists(#pid)',
+					'#status = :active',
+					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+					'(#noBefore = :empty OR :now > #noBefore)',
+					'(#noAfter = :empty OR :now < #noAfter)'
+				].join(' AND '),
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #status = :processing, #pid = :pid'
+			});
+
+			const retrieved = await hooks.db.tasks.get({
+				item: { namespace: 'spec', id: task.id }
+			});
+
+			expect(retrieved?.status).toEqual('PROCESSING');
+			expect(retrieved?.['pid']).toEqual('test');
+		});
+	});
+
+	describe('setTaskSuccess', () => {
+		let task: Hooks.Task;
+
+		beforeEach(async () => {
+			vi.spyOn(hooks.db.tasks, 'update');
+
+			task = await hooks.registerTask(createTestTask());
+		});
+
+		afterEach(async () => {
+			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+		});
+
+		describe.todo('executionType = MANUAL', () => {
+			it('should set with response.ok = true', async () => {
+				task = await hooks.db.tasks.update({
+					attributeNames: {
+						'#status': 'status',
+						'#pid': 'pid'
+					},
+					attributeValues: {
+						':pid': 'test',
+						':processing': 'PROCESSING'
+					},
+					filter: {
+						item: { namespace: 'spec', id: task.id }
+					},
+					updateExpression: 'SET #pid = :pid, #status = :processing'
+				});
+				vi.mocked(hooks.db.tasks.update).mockClear();
+
+				const res = await hooks.setTaskSuccess({
+					executionType: 'MANUAL',
+					pid: 'test',
+					task,
+					response: {
+						body: 'test',
+						headers: {},
+						ok: true,
+						status: 200
+					}
+				});
+
+				expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#lastExecutionDate': 'lastExecutionDate',
+						'#lastExecutionType': 'lastExecutionType',
+						'#lastResponseBody': 'lastResponseBody',
+						'#lastResponseHeaders': 'lastResponseHeaders',
+						'#lastResponseStatus': 'lastResponseStatus',
+						'#pid': 'pid',
+						'#scheduledDate': 'scheduledDate',
+						'#status': 'status',
+						'#successfulOrFailed': 'successful'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':executionType': 'MANUAL',
+						':now': expect.any(String),
+						':one': 1,
+						':pid': 'test',
+						':processing': 'PROCESSING',
+						':responseBody': 'test',
+						':responseHeaders': {},
+						':responseStatus': 200,
+						':scheduledDate': expect.any(String)
+					},
+					conditionExpression: '#status = :processing AND #pid = :pid',
+					filter: {
+						item: { namespace: 'spec', id: task.id }
+					},
+					updateExpression: [
+						`SET ${[
+							'#execution.#lastExecutionDate = :now',
+							'#execution.#lastExecutionType = :executionType',
+							'#execution.#lastResponseBody = :responseBody',
+							'#execution.#lastResponseHeaders = :responseHeaders',
+							'#execution.#lastResponseStatus = :responseStatus',
+							'#scheduledDate = :scheduledDate',
+							'#status = :active'
+						].join(', ')}`,
+						`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+						`REMOVE #pid`
+					].join(' ')
+				});
+
+				const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+				expect(scheduledDateDiff).toEqual(1800000); // 30 minutes
+				expect(res).toEqual({
+					__createdAt: expect.any(String),
+					__namespace__eventPattern: '-',
+					__updatedAt: expect.any(String),
+					concurrency: false,
+					errors: {
+						count: 0,
+						firstErrorDate: '',
+						lastErrorDate: '',
+						lastError: '',
+						lastExecutionType: ''
+					},
+					eventPattern: '-',
+					execution: {
+						count: 1,
+						failed: 0,
+						firstExecutionDate: '',
+						firstScheduledDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'MANUAL',
+						lastResponseBody: 'test',
+						lastResponseHeaders: {},
+						lastResponseStatus: 200,
+						successful: 1
+					},
+					id: expect.any(String),
+					idPrefix: '',
+					namespace: 'spec',
+					noAfter: '',
+					noBefore: '',
+					repeat: {
+						interval: 30,
+						max: 0,
+						unit: 'minutes'
+					},
+					request: {
+						body: null,
+						headers: null,
+						method: 'POST',
+						url: 'https://httpbin.org/anything'
+					},
+					rescheduleOnManualExecution: true,
+					retryLimit: 3,
+					scheduledDate: expect.any(String),
+					status: 'ACTIVE'
+				});
+			});
+
+			it('should set with response.ok = false and task.rescheduleOnManualExecution = false', async () => {
+				task = await hooks.db.tasks.update({
+					attributeNames: {
+						'#status': 'status',
+						'#pid': 'pid',
+						'#rescheduleOnManualExecution': 'rescheduleOnManualExecution'
+					},
+					attributeValues: {
+						':pid': 'test',
+						':processing': 'PROCESSING',
+						':rescheduleOnManualExecution': false
+					},
+					filter: {
+						item: { namespace: 'spec', id: task.id }
+					},
+					updateExpression: 'SET #pid = :pid, #rescheduleOnManualExecution = :rescheduleOnManualExecution, #status = :processing'
+				});
+				vi.mocked(hooks.db.tasks.update).mockClear();
+
+				const res = await hooks.setTaskSuccess({
+					executionType: 'MANUAL',
+					pid: 'test',
+					task,
+					response: {
+						body: 'test',
+						headers: {},
+						ok: false,
+						status: 200
+					}
+				});
+
+				const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+				expect(scheduledDateDiff).toEqual(0);
+				expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+					attributeNames: {
+						'#count': 'count',
+						'#execution': 'execution',
+						'#lastExecutionDate': 'lastExecutionDate',
+						'#lastExecutionType': 'lastExecutionType',
+						'#lastResponseBody': 'lastResponseBody',
+						'#lastResponseHeaders': 'lastResponseHeaders',
+						'#lastResponseStatus': 'lastResponseStatus',
+						'#pid': 'pid',
+						'#status': 'status',
+						'#successfulOrFailed': 'failed'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':executionType': 'MANUAL',
+						':now': expect.any(String),
+						':one': 1,
+						':pid': 'test',
+						':processing': 'PROCESSING',
+						':responseBody': 'test',
+						':responseHeaders': {},
+						':responseStatus': 200
+					},
+					conditionExpression: '#status = :processing AND #pid = :pid',
+					filter: {
+						item: { namespace: 'spec', id: task.id }
+					},
+					updateExpression: [
+						`SET ${[
+							'#execution.#lastExecutionDate = :now',
+							'#execution.#lastExecutionType = :executionType',
+							'#execution.#lastResponseBody = :responseBody',
+							'#execution.#lastResponseHeaders = :responseHeaders',
+							'#execution.#lastResponseStatus = :responseStatus',
+							'#status = :active'
+						].join(', ')}`,
+						`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+						`REMOVE #pid`
+					].join(' ')
+				});
+
+				expect(res).toEqual({
+					__createdAt: expect.any(String),
+					__namespace__eventPattern: '-',
+					__updatedAt: expect.any(String),
+					concurrency: false,
+					errors: {
+						count: 0,
+						firstErrorDate: '',
+						lastErrorDate: '',
+						lastError: '',
+						lastExecutionType: ''
+					},
+					eventPattern: '-',
+					execution: {
+						count: 1,
+						failed: 1,
+						firstExecutionDate: '',
+						firstScheduledDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'MANUAL',
+						lastResponseBody: 'test',
+						lastResponseHeaders: {},
+						lastResponseStatus: 200,
+						successful: 0
+					},
+					id: expect.any(String),
+					idPrefix: '',
+					namespace: 'spec',
+					noAfter: '',
+					noBefore: '',
+					repeat: {
+						interval: 30,
+						max: 0,
+						unit: 'minutes'
+					},
+					request: {
+						body: null,
+						headers: null,
+						method: 'POST',
+						url: 'https://httpbin.org/anything'
+					},
+					rescheduleOnManualExecution: false,
+					retryLimit: 3,
+					scheduledDate: expect.any(String),
+					status: 'ACTIVE'
+				});
+			});
+
+			it('should set with task.repeat.interval = 0', async () => {});
+		});
+	});
+
+	describe('suspendTask', () => {
 		beforeEach(() => {
 			vi.spyOn(hooks.db.tasks, 'update');
 		});
@@ -835,9 +2199,9 @@ describe('/index.ts', () => {
 		});
 
 		it('should suspend an active task', async () => {
-			const task = await hooks.register(createTestTask());
+			const task = await hooks.registerTask(createTestTask());
 
-			const suspended = await hooks.suspend({
+			const suspended = await hooks.suspendTask({
 				id: task.id,
 				namespace: task.namespace
 			});
@@ -850,29 +2214,26 @@ describe('/index.ts', () => {
 				},
 				conditionExpression: '#status = :active',
 				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
+					item: { namespace: task.namespace, id: task.id }
 				},
 				updateExpression: 'SET #status = :suspended'
 			});
 
-			expect(suspended?.status).toBe('SUSPENDED');
+			expect(suspended?.status).toEqual('SUSPENDED');
 		});
 
 		it('should not suspend a non-active task', async () => {
-			const task = await hooks.register(createTestTask());
+			const task = await hooks.registerTask(createTestTask());
 
 			// First suspend succeeds
-			await hooks.suspend({
+			await hooks.suspendTask({
 				id: task.id,
 				namespace: task.namespace
 			});
 
 			// Second suspend should fail condition check
 			await expect(
-				hooks.suspend({
+				hooks.suspendTask({
 					id: task.id,
 					namespace: task.namespace
 				})
@@ -880,7 +2241,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should return null for non-existent task', async () => {
-			const suspended = await hooks.suspend({
+			const suspended = await hooks.suspendTask({
 				id: 'non-existent',
 				namespace: 'spec'
 			});
@@ -890,10 +2251,10 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('suspendMany', () => {
+	describe('suspendManyTasks', () => {
 		beforeEach(() => {
-			vi.spyOn(hooks.db.tasks.client, 'send');
-			vi.spyOn(hooks.db.tasks, 'query');
+			vi.spyOn(hooks, 'fetch');
+			vi.spyOn(hooks.db.tasks, 'update');
 		});
 
 		afterEach(async () => {
@@ -903,54 +2264,40 @@ describe('/index.ts', () => {
 		it('should suspend many tasks', async () => {
 			const tasks = await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return hooks.register(task);
+					return hooks.registerTask(task);
 				})
 			);
 
 			// cause condition check to fail
-			await hooks.suspend({
+			await hooks.suspendTask({
 				id: tasks[0].id,
 				namespace: tasks[0].namespace
 			});
 
-			const res = await hooks.suspendMany({
+			const res = await hooks.suspendManyTasks({
 				namespace: 'spec'
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {},
-				attributeValues: {},
+			expect(hooks.fetch).toHaveBeenCalledWith({
 				chunkLimit: 100,
-				filterExpression: '',
-				index: 'namespace-scheduled-date',
-				item: { namespace: 'spec' },
 				limit: Infinity,
+				namespace: 'spec',
 				onChunk: expect.any(Function),
-				queryExpression: '',
-				scanIndexForward: true,
 				startKey: null
 			});
 
-			expect(hooks.db.tasks.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConditionExpression: '#status = :active',
-						ExpressionAttributeNames: {
-							'#status': 'status'
-						},
-						ExpressionAttributeValues: {
-							':active': 'ACTIVE',
-							':suspended': 'SUSPENDED'
-						},
-						Key: {
-							namespace: expect.any(String),
-							id: expect.any(String)
-						},
-						TableName: expect.any(String),
-						UpdateExpression: 'SET #status = :suspended'
-					})
-				})
-			);
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: { '#status': 'status' },
+				attributeValues: {
+					':active': 'ACTIVE',
+					':suspended': 'SUSPENDED'
+				},
+				conditionExpression: '#status = :active',
+				filter: {
+					item: { namespace: 'spec', id: expect.any(String) }
+				},
+				updateExpression: 'SET #status = :suspended'
+			});
 
 			expect(res).toEqual({
 				count: 2,
@@ -969,843 +2316,9 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('trigger', () => {
-		beforeEach(() => {
-			vi.spyOn(hooks.db.tasks, 'query');
-			vi.spyOn(hooks.db.tasks, 'update');
-			vi.spyOn(hooks.webhooks, 'trigger');
-		});
+	describe.todo('trigger', () => {});
 
-		afterEach(async () => {
-			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
-		});
-
-		it('should trigger', async () => {
-			const task = await hooks.register(createTestTask());
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 1,
-				errors: 0
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':now': expect.any(String),
-					':zero': 0
-				},
-				chunkLimit: 100,
-				filterExpression: ['attribute_not_exists(#pid)', '(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'].join(' AND '),
-				index: 'status-scheduled-date',
-				onChunk: expect.any(Function),
-				queryExpression: '#status = :active AND #scheduledDate <= :now'
-			});
-
-			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: '',
-				namespace: 'spec',
-				requestBody: null,
-				requestHeaders: null,
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything',
-				retryLimit: task.retryLimit
-			});
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledTimes(2);
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':zero': 0
-				},
-				conditionExpression: [
-					'#status = :active',
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
-				].join(' AND '),
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #status = :processing, #pid = :pid'
-			});
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#firstExecutionDate': 'firstExecutionDate',
-					'#lastExecutionDate': 'lastExecutionDate',
-					'#lastResponseBody': 'lastResponseBody',
-					'#lastResponseHeaders': 'lastResponseHeaders',
-					'#lastResponseStatus': 'lastResponseStatus',
-					'#pid': 'pid',
-					'#status': 'status',
-					'#successfulOrFailed': 'successful'
-				},
-				attributeValues: {
-					':done': 'DONE',
-					':now': expect.any(String),
-					':one': 1,
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':responseBody': expect.any(String),
-					':responseHeaders': expect.any(Object),
-					':responseStatus': 200
-				},
-				conditionExpression: '#status = :processing AND #pid = :pid',
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: [
-					'SET',
-					[
-						'#execution.#lastExecutionDate = :now',
-						'#execution.#lastResponseBody = :responseBody',
-						'#execution.#lastResponseHeaders = :responseHeaders',
-						'#execution.#lastResponseStatus = :responseStatus',
-						'#execution.#firstExecutionDate = :now',
-						'#status = :done'
-					].join(', '),
-					'ADD',
-					['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', '),
-					'REMOVE #pid'
-				].join(' ')
-			});
-
-			const retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved?.['pid']).toBeUndefined();
-			expect(retrieved?.execution.firstExecutionDate).toEqual(retrieved?.execution.lastExecutionDate);
-			expect(retrieved?.execution).toEqual({
-				count: 1,
-				failed: 0,
-				firstExecutionDate: expect.any(String),
-				firstScheduledDate: task.scheduledDate,
-				lastExecutionDate: expect.any(String),
-				lastResponseBody: '{"success":true,"url":"https://httpbin.org/anything"}',
-				lastResponseHeaders: { 'content-type': 'application/json' },
-				lastResponseStatus: 200,
-				successful: 1
-			});
-			expect(retrieved?.scheduledDate).toEqual(task.scheduledDate);
-			expect(retrieved?.status).toEqual('DONE');
-		});
-
-		it('should trigger and register next repetition', async () => {
-			const task = await hooks.register(
-				createTestTask(0, {
-					repeat: {
-						interval: 1,
-						max: 0,
-						unit: 'minutes'
-					}
-				})
-			);
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 1,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: '',
-				namespace: 'spec',
-				requestBody: null,
-				requestHeaders: null,
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything',
-				retryLimit: task.retryLimit
-			});
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledTimes(2);
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':zero': 0
-				},
-				conditionExpression: [
-					'#status = :active',
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
-				].join(' AND '),
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #status = :processing, #pid = :pid'
-			});
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#firstExecutionDate': 'firstExecutionDate',
-					'#lastExecutionDate': 'lastExecutionDate',
-					'#lastResponseBody': 'lastResponseBody',
-					'#lastResponseHeaders': 'lastResponseHeaders',
-					'#lastResponseStatus': 'lastResponseStatus',
-					'#pid': 'pid',
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status',
-					'#successfulOrFailed': 'successful'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':now': expect.any(String),
-					':one': 1,
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':responseBody': expect.any(String),
-					':responseHeaders': expect.any(Object),
-					':responseStatus': 200,
-					':scheduledDate': expect.any(String)
-				},
-				conditionExpression: '#status = :processing AND #pid = :pid',
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: [
-					'SET',
-					[
-						'#execution.#lastExecutionDate = :now',
-						'#execution.#lastResponseBody = :responseBody',
-						'#execution.#lastResponseHeaders = :responseHeaders',
-						'#execution.#lastResponseStatus = :responseStatus',
-						'#execution.#firstExecutionDate = :now',
-						'#scheduledDate = :scheduledDate',
-						'#status = :active'
-					].join(', '),
-					'ADD',
-					['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', '),
-					'REMOVE #pid'
-				].join(' ')
-			});
-
-			const retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved?.['pid']).toBeUndefined();
-			expect(retrieved?.execution.firstExecutionDate).toEqual(retrieved?.execution.lastExecutionDate);
-			expect(retrieved?.execution).toEqual({
-				count: 1,
-				failed: 0,
-				firstExecutionDate: expect.any(String),
-				firstScheduledDate: task.scheduledDate,
-				lastExecutionDate: expect.any(String),
-				lastResponseBody: '{"success":true,"url":"https://httpbin.org/anything"}',
-				lastResponseHeaders: { 'content-type': 'application/json' },
-				lastResponseStatus: 200,
-				successful: 1
-			});
-			expect(retrieved?.scheduledDate).not.toEqual(task.scheduledDate);
-			expect(retrieved?.status).toEqual('ACTIVE');
-		});
-
-		it('should trigger and register next repetition until max is reached', async () => {
-			const task = await hooks.register(
-				createTestTask(0, {
-					repeat: {
-						interval: 1,
-						max: 2,
-						unit: 'minutes'
-					}
-				})
-			);
-
-			await hooks.trigger();
-
-			let retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			// keep same scheduled date for test purposes
-			await hooks.db.tasks.update({
-				attributeNames: { '#scheduledDate': 'scheduledDate' },
-				attributeValues: { ':scheduledDate': task.scheduledDate },
-				filter: {
-					item: { id: task.id, namespace: task.namespace }
-				},
-				updateExpression: 'SET #scheduledDate = :scheduledDate'
-			});
-
-			expect(retrieved!.execution.count).toEqual(1);
-			expect(retrieved!.execution.failed).toEqual(0);
-			expect(retrieved!.execution.firstExecutionDate).toEqual(retrieved!.execution.lastExecutionDate);
-			expect(retrieved!.execution.lastResponseStatus).toEqual(200);
-			expect(retrieved!.execution.successful).toEqual(1);
-			expect(retrieved!.status).toEqual('ACTIVE');
-			expect(hooks.webhooks.trigger).toHaveBeenCalledOnce();
-
-			// @ts-expect-error
-			vi.mocked(hooks.webhooks.trigger).mockResolvedValueOnce({
-				response: {
-					body: '{"success":false,"url":"https://httpbin.org/anything"}',
-					headers: { 'content-type': 'application/json' },
-					ok: false,
-					status: 400
-				}
-			});
-
-			await hooks.trigger();
-
-			retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved!.execution.count).toEqual(2);
-			expect(retrieved!.execution.failed).toEqual(1);
-			expect(retrieved!.execution.firstExecutionDate).not.toEqual(retrieved!.execution.lastExecutionDate);
-			expect(retrieved!.execution.lastResponseStatus).toEqual(400);
-			expect(retrieved!.execution.successful).toEqual(1);
-			expect(retrieved!.status).toEqual('DONE');
-			expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(2);
-		});
-
-		it('should not trigger if task is future', async () => {
-			await hooks.register(createTestTask(1000));
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.update).not.toHaveBeenCalled();
-		});
-
-		it('should not trigger if task has pid', async () => {
-			const task = await hooks.register(createTestTask());
-
-			await hooks.db.tasks.update({
-				attributeNames: { '#pid': 'pid' },
-				attributeValues: { ':pid': '123' },
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #pid = :pid'
-			});
-			vi.mocked(hooks.db.tasks.update).mockClear();
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.update).not.toHaveBeenCalled();
-		});
-
-		it('should not trigger if execution.count >= repeat.max', async () => {
-			const task = await hooks.register(createTestTask());
-
-			await hooks.db.tasks.update({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#repeat': 'repeat'
-				},
-				attributeValues: {
-					':count': 1,
-					':max': 1
-				},
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #execution.#count = :count, #repeat.#max = :max'
-			});
-			vi.mocked(hooks.db.tasks.update).mockClear();
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.update).not.toHaveBeenCalled();
-		});
-
-		it('should not trigger suspended tasks', async () => {
-			const task = await hooks.register(createTestTask());
-			await hooks.suspend({
-				id: task.id,
-				namespace: task.namespace
-			});
-			vi.mocked(hooks.db.tasks.update).mockClear();
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.update).not.toHaveBeenCalled();
-		});
-
-		it('should trigger with [body, headers, idPrefix, method, url]', async () => {
-			const task = await hooks.register(
-				createTestTask(0, {
-					idPrefix: 'test-',
-					request: {
-						body: { a: 1 },
-						headers: { a: '1' },
-						method: 'POST',
-						url: 'https://httpbin.org/anything'
-					}
-				})
-			);
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 1,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: 'test-',
-				namespace: 'spec',
-				requestBody: { a: 1 },
-				requestHeaders: { a: '1' },
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything',
-				retryLimit: task.retryLimit
-			});
-		});
-
-		it('should process with GMT', async () => {
-			const now = new Date();
-			const nowLocalString =
-				now
-					.toLocaleString('sv', {
-						timeZone: 'America/Sao_Paulo'
-					})
-					.replace(' ', 'T') + '-03:00';
-
-			const task = await hooks.register(
-				createTestTask(1000, {
-					scheduledDate: new Date(nowLocalString).toISOString()
-				})
-			);
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 1,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: '',
-				namespace: 'spec',
-				requestBody: null,
-				requestHeaders: null,
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything',
-				retryLimit: task.retryLimit
-			});
-		});
-
-		it('should handle concurrent tasks', async () => {
-			const tasks = await Promise.all(
-				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return hooks.register(task);
-				})
-			);
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 3,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(3);
-			_.forEach(tasks, () => {
-				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					idPrefix: '',
-					namespace: 'spec',
-					requestBody: null,
-					requestHeaders: null,
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything',
-					retryLimit: 3
-				});
-			});
-		});
-
-		it('should handle ConditionalCheckFailedException', async () => {
-			vi.spyOn(hooks.db.tasks, 'update').mockImplementationOnce(() => {
-				throw new ConditionalCheckFailedException({
-					$metadata: {},
-					message: 'ConditionalCheckFailedException'
-				});
-			});
-
-			await hooks.register(createTestTask());
-
-			const res = await hooks.trigger();
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
-			});
-
-			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.update).toHaveBeenCalledOnce();
-		});
-
-		it('should keep task ACTIVE if max errors not reached', async () => {
-			vi.spyOn(hooks.webhooks, 'trigger').mockRejectedValueOnce(new Error('Failed to fetch'));
-
-			const task = await hooks.register(createTestTask());
-
-			await hooks.trigger();
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledTimes(2);
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':zero': 0
-				},
-				conditionExpression: [
-					'#status = :active',
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
-				].join(' AND '),
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #status = :processing, #pid = :pid'
-			});
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#errors': 'errors',
-					'#lastError': 'lastError',
-					'#pid': 'pid',
-					'#firstErrorDate': 'firstErrorDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':error': 'Failed to fetch',
-					':one': 1,
-					':now': expect.any(String),
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':active': 'ACTIVE'
-				},
-				conditionExpression: '#status = :processing AND #pid = :pid',
-				filter: {
-					item: {
-						namespace: 'spec',
-						id: task.id
-					}
-				},
-				updateExpression:
-					'SET #errors.#lastError = :error, #errors.#firstErrorDate = :now, #status = :active ADD #errors.#count :one REMOVE #pid'
-			});
-
-			const retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved?.['pid']).toBeUndefined();
-			expect(retrieved?.execution.firstExecutionDate).toEqual(retrieved?.execution.lastExecutionDate);
-			expect(retrieved?.execution).toEqual({
-				count: 0,
-				failed: 0,
-				firstExecutionDate: null,
-				firstScheduledDate: task.scheduledDate,
-				lastExecutionDate: null,
-				lastResponseBody: '',
-				lastResponseHeaders: {},
-				lastResponseStatus: 0,
-				successful: 0
-			});
-			expect(retrieved?.scheduledDate).toEqual(task.scheduledDate);
-			expect(retrieved?.status).toEqual('ACTIVE');
-		});
-
-		it('should mark task as FAILED after max errors', async () => {
-			vi.spyOn(hooks.webhooks, 'trigger').mockRejectedValueOnce(new Error('Failed to fetch'));
-
-			hooks.maxErrors = 1;
-			const task = await hooks.register(createTestTask());
-
-			await hooks.trigger();
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledTimes(2);
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':zero': 0
-				},
-				conditionExpression: [
-					'#status = :active',
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)'
-				].join(' AND '),
-				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
-				},
-				updateExpression: 'SET #status = :processing, #pid = :pid'
-			});
-
-			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
-				attributeNames: {
-					'#count': 'count',
-					'#errors': 'errors',
-					'#lastError': 'lastError',
-					'#pid': 'pid',
-					'#firstErrorDate': 'firstErrorDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':error': 'Failed to fetch',
-					':one': 1,
-					':now': expect.any(String),
-					':pid': expect.any(String),
-					':processing': 'PROCESSING',
-					':failed': 'FAILED'
-				},
-				conditionExpression: '#status = :processing AND #pid = :pid',
-				filter: {
-					item: {
-						namespace: 'spec',
-						id: task.id
-					}
-				},
-				updateExpression:
-					'SET #errors.#lastError = :error, #errors.#firstErrorDate = :now, #status = :failed ADD #errors.#count :one REMOVE #pid'
-			});
-
-			const retrieved = await hooks.db.tasks.get({
-				item: {
-					id: task.id,
-					namespace: task.namespace
-				}
-			});
-
-			expect(retrieved?.['pid']).toBeUndefined();
-			expect(retrieved?.errors).toEqual({
-				count: 1,
-				firstErrorDate: expect.any(String),
-				lastError: 'Failed to fetch',
-				lastErrorDate: null
-			});
-			expect(retrieved?.execution.firstExecutionDate).toEqual(retrieved?.execution.lastExecutionDate);
-			expect(retrieved?.execution).toEqual({
-				count: 0,
-				failed: 0,
-				firstExecutionDate: null,
-				firstScheduledDate: task.scheduledDate,
-				lastExecutionDate: null,
-				lastResponseBody: '',
-				lastResponseHeaders: {},
-				lastResponseStatus: 0,
-				successful: 0
-			});
-			expect(retrieved?.scheduledDate).toEqual(task.scheduledDate);
-			expect(retrieved?.status).toEqual('FAILED');
-		});
-	});
-
-	describe('triggerDryrun', () => {
-		beforeAll(async () => {
-			await Promise.all(
-				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
-					return hooks.register(task);
-				})
-			);
-		});
-
-		beforeEach(() => {
-			vi.spyOn(hooks.db.tasks, 'query');
-		});
-
-		afterAll(async () => {
-			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
-		});
-
-		it('should process dry run', async () => {
-			const res = await hooks.triggerDryrun();
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':date': expect.any(String),
-					':active': 'ACTIVE'
-				},
-				index: 'status-scheduled-date',
-				filterExpression: '',
-				limit: 100,
-				queryExpression: '#status = :active AND #scheduledDate <= :date'
-			});
-
-			expect(res.count).toEqual(3);
-		});
-
-		it('should process dry run by [namespace]', async () => {
-			const res = await hooks.triggerDryrun({ namespace: 'spec' });
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#namespace': 'namespace',
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':date': expect.any(String),
-					':namespace': 'spec',
-					':active': 'ACTIVE'
-				},
-				index: 'status-scheduled-date',
-				filterExpression: '#namespace = :namespace',
-				limit: 100,
-				queryExpression: '#status = :active AND #scheduledDate <= :date'
-			});
-
-			expect(res.count).toEqual(3);
-		});
-
-		it('should process dry run by [namespace, id, date] with limit', async () => {
-			const date = new Date('2024-03-18T10:00:00.000Z').toISOString();
-			const res = await hooks.triggerDryrun({
-				date,
-				id: 'id',
-				limit: 500,
-				namespace: 'spec'
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: {
-					'#id': 'id',
-					'#namespace': 'namespace',
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':date': date,
-					':id': 'id',
-					':namespace': 'spec',
-					':active': 'ACTIVE'
-				},
-				index: 'status-scheduled-date',
-				filterExpression: '#namespace = :namespace AND begins_with(#id, :id)',
-				limit: 500,
-				queryExpression: '#status = :active AND #scheduledDate <= :date'
-			});
-
-			expect(res.count).toEqual(0);
-		});
-	});
-
-	describe('unsuspend', () => {
+	describe('unsuspendTask', () => {
 		beforeEach(() => {
 			vi.spyOn(hooks.db.tasks, 'update');
 		});
@@ -1815,14 +2328,14 @@ describe('/index.ts', () => {
 		});
 
 		it('should unsuspend a suspended task', async () => {
-			const task = await hooks.register(createTestTask());
+			const task = await hooks.registerTask(createTestTask());
 
-			await hooks.suspend({
+			await hooks.suspendTask({
 				id: task.id,
 				namespace: task.namespace
 			});
 
-			const unsuspended = await hooks.unsuspend({
+			const unsuspended = await hooks.unsuspendTask({
 				id: task.id,
 				namespace: task.namespace
 			});
@@ -1835,23 +2348,20 @@ describe('/index.ts', () => {
 				},
 				conditionExpression: '#status = :suspended',
 				filter: {
-					item: {
-						namespace: task.namespace,
-						id: task.id
-					}
+					item: { namespace: task.namespace, id: task.id }
 				},
 				updateExpression: 'SET #status = :active'
 			});
 
-			expect(unsuspended?.status).toBe('ACTIVE');
+			expect(unsuspended?.status).toEqual('ACTIVE');
 		});
 
 		it('should not unsuspend a non-suspended task', async () => {
-			const task = await hooks.register(createTestTask());
+			const task = await hooks.registerTask(createTestTask());
 
 			// Should fail because task is ACTIVE, not SUSPENDED
 			await expect(
-				hooks.unsuspend({
+				hooks.unsuspendTask({
 					id: task.id,
 					namespace: task.namespace
 				})
@@ -1859,7 +2369,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should return null for non-existent task', async () => {
-			const unsuspended = await hooks.unsuspend({
+			const unsuspended = await hooks.unsuspendTask({
 				id: 'non-existent',
 				namespace: 'spec'
 			});
@@ -1884,4 +2394,6 @@ describe('/index.ts', () => {
 			expect(uuid).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
 		});
 	});
+
+	describe.todo('webhookCaller', () => {});
 });

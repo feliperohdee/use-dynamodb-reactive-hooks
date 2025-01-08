@@ -1,7 +1,6 @@
-import _, { now } from 'lodash';
+import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAll } from 'use-async-helpers';
-import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import HttpError from 'use-http-error';
 import Webhooks from 'use-dynamodb-webhooks';
@@ -22,6 +21,7 @@ const task = z.object({
 		.default(() => {
 			return new Date().toISOString();
 		}),
+	__namespace__eventPattern: z.union([z.string(), z.literal('-')]),
 	__updatedAt: z
 		.string()
 		.datetime()
@@ -31,19 +31,19 @@ const task = z.object({
 	concurrency: z.boolean().default(false),
 	errors: z.object({
 		count: z.number(),
-		firstErrorDate: z.string().datetime().nullable(),
-		lastErrorDate: z.string().datetime().nullable(),
-		lastError: z.string().nullable(),
-		lastExecutionType: executionType.nullable()
+		firstErrorDate: z.union([z.string().datetime(), z.literal('')]),
+		lastErrorDate: z.union([z.string().datetime(), z.literal('')]),
+		lastError: z.string(),
+		lastExecutionType: z.union([executionType, z.literal('')])
 	}),
 	eventPattern: z.string(),
 	execution: z.object({
 		count: z.number(),
 		failed: z.number(),
-		firstExecutionDate: z.string().datetime().nullable(),
-		firstScheduledDate: z.string().datetime().nullable(),
-		lastExecutionDate: z.string().datetime().nullable(),
-		lastExecutionType: executionType.nullable(),
+		firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
+		firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
+		lastExecutionDate: z.union([z.string().datetime(), z.literal('')]),
+		lastExecutionType: z.union([executionType, z.literal('')]),
 		lastResponseBody: z.string(),
 		lastResponseHeaders: z.record(z.string()),
 		lastResponseStatus: z.number(),
@@ -52,11 +52,11 @@ const task = z.object({
 	id: z.string(),
 	idPrefix: z.string(),
 	namespace: z.string(),
-	notAfter: z.string().datetime().nullable(),
-	notBefore: z.string().datetime().nullable(),
+	noAfter: z.union([z.string().datetime(), z.literal('')]),
+	noBefore: z.union([z.string().datetime(), z.literal('')]),
 	repeat: z.object({
-		interval: z.number().min(1),
-		max: z.number().min(0).default(1),
+		interval: z.number().min(0),
+		max: z.number().min(0).default(0),
 		unit: z.enum(['minutes', 'hours', 'days'])
 	}),
 	request: z.object({
@@ -67,22 +67,48 @@ const task = z.object({
 	}),
 	rescheduleOnManualExecution: z.boolean().default(true),
 	retryLimit: z.number().min(0).default(3),
-	scheduledDate: z.string().datetime().nullable(),
+	scheduledDate: z.union([z.string().datetime(), z.literal('-')]),
 	status: taskStatus.default('ACTIVE')
 });
 
 const taskInput = task
 	.extend({
-		notAfter: z.string().datetime({ offset: true }).nullable().optional(),
-		notBefore: z.string().datetime({ offset: true }).nullable().optional(),
+		noAfter: z.union([
+			z.literal(''),
+			z
+				.string()
+				.datetime({ offset: true })
+				.refine(date => {
+					return new Date(date) > new Date(_.now() - 1000);
+				}, 'noAfter cannot be in the past')
+		]),
+		noBefore: z.union([
+			z.literal(''),
+			z
+				.string()
+				.datetime({ offset: true })
+				.refine(date => {
+					return new Date(date) > new Date(_.now() - 1000);
+				}, 'noBefore cannot be in the past')
+		]),
 		request: task.shape.request.partial({
 			body: true,
 			headers: true,
 			method: true
-		})
+		}),
+		scheduledDate: z.union([
+			z.literal(''),
+			z
+				.string()
+				.datetime({ offset: true })
+				.refine(date => {
+					return new Date(date) > new Date(_.now() - 1000);
+				}, 'scheduledDate cannot be in the past')
+		])
 	})
 	.omit({
 		__createdAt: true,
+		__namespace__eventPattern: true,
 		__updatedAt: true,
 		errors: true,
 		execution: true,
@@ -93,26 +119,23 @@ const taskInput = task
 		concurrency: true,
 		eventPattern: true,
 		idPrefix: true,
+		noAfter: true,
+		noBefore: true,
 		repeat: true,
 		rescheduleOnManualExecution: true,
 		scheduledDate: true
 	})
 	.refine(
 		data => {
-			return _.isNil(data.notBefore) || _.isNil(data.notAfter) || new Date(data.notBefore) < new Date(data.notAfter);
+			if (data.noAfter && data.noBefore) {
+				return new Date(data.noAfter) > new Date(data.noBefore);
+			}
+
+			return true;
 		},
 		{
-			message: 'notBefore cannot be equal or after notAfter',
-			path: ['notBefore', 'notAfter']
-		}
-	)
-	.refine(
-		data => {
-			return _.isNil(data.scheduledDate) || new Date(data.scheduledDate) > new Date();
-		},
-		{
-			message: 'scheduledDate cannot be in the past',
-			path: ['scheduledDate']
+			message: 'noAfter must be after noBefore',
+			path: ['noAfter']
 		}
 	);
 
@@ -172,6 +195,33 @@ const getInput = z.object({
 	namespace: z.string()
 });
 
+const queryActiveTasksInputBase = z.object({
+	date: z.date(),
+	onChunk: z
+		.function()
+		.args(
+			z.object({
+				count: z.number(),
+				items: z.array(task)
+			})
+		)
+		.returns(z.promise(z.void()))
+});
+
+const queryActiveTasksInput = z.union([
+	queryActiveTasksInputBase.extend({
+		eventPattern: z.string(),
+		eventPatternPrefix: z.boolean().default(false),
+		namespace: z.string()
+	}),
+	queryActiveTasksInputBase.extend({
+		id: z.string(),
+		idPrefix: z.boolean().default(false),
+		namespace: z.string()
+	}),
+	queryActiveTasksInputBase
+]);
+
 const setTaskErrorInput = z.object({
 	error: z.instanceof(Error),
 	executionType,
@@ -181,9 +231,8 @@ const setTaskErrorInput = z.object({
 
 const setTaskLockInput = z.object({
 	date: z.date(),
-	id: z.string(),
-	namespace: z.string(),
-	pid: z.string()
+	pid: z.string(),
+	task
 });
 
 const setTaskSuccessInput = z.object({
@@ -197,7 +246,7 @@ const log = Webhooks.schema.log;
 const triggerManualInput = z.union([
 	z.object({
 		id: z.string().optional(),
-		idPrefix: z.string().optional(),
+		idPrefix: z.boolean().optional(),
 		namespace: z.string(),
 		requestBody: z.record(z.any()).optional(),
 		requestHeaders: z.record(z.string()).optional(),
@@ -222,6 +271,7 @@ const schema = {
 	fetchLogsInput,
 	getInput,
 	log,
+	queryActiveTasksInput,
 	setTaskErrorInput,
 	setTaskLockInput,
 	setTaskSuccessInput,
@@ -251,6 +301,7 @@ namespace Hooks {
 	export type FetchLogsInput = z.input<typeof fetchLogsInput>;
 	export type GetInput = z.input<typeof getInput>;
 	export type Log = z.infer<typeof log>;
+	export type QueryActiveTasksInput = z.input<typeof queryActiveTasksInput>;
 	export type SetTaskErrorInput = z.input<typeof setTaskErrorInput>;
 	export type SetTaskLockInput = z.input<typeof setTaskLockInput>;
 	export type SetTaskSuccessInput = z.input<typeof setTaskSuccessInput>;
@@ -277,6 +328,7 @@ class Hooks {
 		const tasks = new Dynamodb<Hooks.Task>({
 			accessKeyId: options.accessKeyId,
 			indexes: [
+				// used to fetch tasks by namespace / eventPattern
 				{
 					name: 'namespace-event-pattern',
 					partition: 'namespace',
@@ -284,6 +336,7 @@ class Hooks {
 					sort: 'eventPattern',
 					sortType: 'S'
 				},
+				// used to fetch tasks by namespace / scheduledDate
 				{
 					name: 'namespace-scheduled-date',
 					partition: 'namespace',
@@ -291,13 +344,15 @@ class Hooks {
 					sort: 'scheduledDate',
 					sortType: 'S'
 				},
+				// used to trigger tasks by status / namespace#eventPattern
 				{
-					name: 'namespace-status-event-pattern',
-					partition: 'namespace',
+					name: 'status-namespace-event-pattern',
+					partition: 'status',
 					partitionType: 'S',
-					sort: 'status__eventPattern',
+					sort: '__namespace__eventPattern',
 					sortType: 'S'
 				},
+				// used to trigger tasks by status / scheduledDate
 				{
 					name: 'status-scheduled-date',
 					partition: 'status',
@@ -306,9 +361,6 @@ class Hooks {
 					sortType: 'S'
 				}
 			],
-			metaAttributes: {
-				status__eventPattern: ['status', 'eventPattern']
-			},
 			region: options.region,
 			schema: {
 				partition: 'namespace',
@@ -435,17 +487,41 @@ class Hooks {
 	async fetch(input: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
 		const args = await fetchInput.parseAsync(input);
 		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
-			attributeNames: {},
-			attributeValues: {},
+			attributeNames: { '#namespace': 'namespace' },
+			attributeValues: { ':namespace': args.namespace },
 			filterExpression: '',
-			item: { namespace: args.namespace },
 			limit: args.limit,
-			onChunk: args.onChunk,
-			prefix: true,
+			queryExpression: '',
 			scanIndexForward: args.desc ? false : true,
 			startKey: args.startKey
 		};
 
+		const filters = {
+			eventPattern: '',
+			scheduledDate: '',
+			status: ''
+		};
+
+		const query = async (options: Dynamodb.QueryOptions<Hooks.Task>) => {
+			options.filterExpression = _.values(filters).filter(Boolean).join(' AND ');
+
+			const res = await this.db.tasks.query(options);
+
+			return {
+				...res,
+				items: _.map(res.items, taskShape)
+			};
+		};
+
+		if (args.chunkLimit) {
+			queryOptions.chunkLimit = args.chunkLimit;
+		}
+
+		if (args.onChunk) {
+			queryOptions.onChunk = args.onChunk;
+		}
+
+		// FILTER BY EVENT_PATTERN
 		if (args.eventPattern) {
 			queryOptions.attributeNames = {
 				...queryOptions.attributeNames,
@@ -456,8 +532,11 @@ class Hooks {
 				...queryOptions.attributeValues,
 				':eventPattern': args.eventPattern
 			};
+
+			filters.eventPattern = args.eventPatternPrefix ? 'begins_with(#eventPattern, :eventPattern)' : '#eventPattern = :eventPattern';
 		}
 
+		// FILTER BY SCHEDULED_DATE
 		if (args.fromScheduledDate && args.toScheduledDate) {
 			const fromScheduledDate = new Date(args.fromScheduledDate);
 			const toScheduledDate = new Date(args.toScheduledDate);
@@ -472,20 +551,11 @@ class Hooks {
 				':fromScheduledDate': fromScheduledDate.toISOString(),
 				':toScheduledDate': toScheduledDate.toISOString()
 			};
+
+			filters.scheduledDate = '#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate';
 		}
 
-		if (args.id) {
-			queryOptions.attributeNames = {
-				...queryOptions.attributeNames,
-				'#id': 'id'
-			};
-
-			queryOptions.attributeValues = {
-				...queryOptions.attributeValues,
-				':id': args.id
-			};
-		}
-
+		// FILTER BY STATUS
 		if (args.status) {
 			queryOptions.attributeNames = {
 				...queryOptions.attributeNames,
@@ -496,96 +566,84 @@ class Hooks {
 				...queryOptions.attributeValues,
 				':status': args.status
 			};
+
+			filters.status = '#status = :status';
 		}
 
+		// QUERY BY ID INDEX
 		if (args.id) {
-			// QUERY BY ID INDEX
-			queryOptions.queryExpression = args.idPrefix ? 'begins_with(#id, :id)' : '#id = :id';
-
-			if (args.eventPattern) {
-				queryOptions.filterExpression = args.eventPatternPrefix
-					? 'begins_with(#eventPattern, :eventPattern)'
-					: '#eventPattern = :eventPattern';
-			}
-
-			if (args.fromScheduledDate && args.toScheduledDate) {
-				queryOptions.filterExpression = concatConditionExpression(
-					queryOptions.filterExpression || '',
-					'#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate'
-				);
-			}
-
-			if (args.status) {
-				queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', '#status = :status');
-			}
-
-			const res = await this.db.tasks.query(queryOptions);
-
-			return {
-				...res,
-				items: _.map(res.items, taskShape)
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#id': 'id'
 			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':id': args.id
+			};
+
+			queryOptions.queryExpression = `#namespace = :namespace AND ${args.idPrefix ? 'begins_with(#id, :id)' : '#id = :id'}`;
+
+			return query(queryOptions);
 		}
 
-		if (args.eventPattern) {
-			if (args.status) {
-				// QUERY BY STATUS -> EVENT_PATTERN INDEX
-				queryOptions.index = 'namespace-status-event-pattern';
-				queryOptions.queryExpression = args.eventPatternPrefix
-					? 'begins_with(#status__#eventPattern, :status__#eventPattern)'
-					: '#status__:eventPattern = :status__:eventPattern';
-			} else {
-				// QUERY BY EVENT_PATTERN INDEX
-				queryOptions.index = 'namespace-event-pattern';
-				queryOptions.queryExpression = args.eventPatternPrefix
-					? 'begins_with(#eventPattern, :eventPattern)'
-					: '#eventPattern = :eventPattern';
-			}
+		// QUERY BY EVENT_PATTERN INDEX
+		if (args.eventPattern && !args.status) {
+			// omit [eventPattern] filter
+			filters.eventPattern = '';
 
-			if (args.fromScheduledDate && args.toScheduledDate) {
-				queryOptions.filterExpression = concatConditionExpression(
-					queryOptions.filterExpression || '',
-					'#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate'
-				);
-			}
+			queryOptions.index = 'namespace-event-pattern';
+			queryOptions.queryExpression = [
+				'#namespace = :namespace',
+				args.eventPatternPrefix ? 'begins_with(#eventPattern, :eventPattern)' : '#eventPattern = :eventPattern'
+			].join(' AND ');
 
-			const res = await this.db.tasks.query(queryOptions);
-
-			return {
-				...res,
-				items: _.map(res.items, taskShape)
-			};
+			return query(queryOptions);
 		}
 
-		if (args.fromScheduledDate) {
-			// QUERY BY SCHEDULED_DATE INDEX
+		// QUERY BY STATUS -> EVENT_PATTERN INDEX
+		if (args.eventPattern && args.status) {
+			// omit [eventPattern, status] filters
+			filters.eventPattern = '';
+			filters.status = '';
+			queryOptions.attributeNames = _.omit(queryOptions.attributeNames, ['#eventPattern', '#namespace']);
+			queryOptions.attributeValues = _.omit(queryOptions.attributeValues, [':eventPattern', ':namespace']);
+
+			queryOptions.index = 'status-namespace-event-pattern';
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#namespace__eventPattern': '__namespace__eventPattern'
+			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':namespace__eventPattern': `${args.namespace}#${args.eventPattern}`
+			};
+
+			queryOptions.queryExpression = [
+				'#status = :status',
+				args.eventPatternPrefix
+					? 'begins_with(#namespace__eventPattern, :namespace__eventPattern)'
+					: '#namespace__eventPattern = :namespace__eventPattern'
+			].join(' AND ');
+
+			return query(queryOptions);
+		}
+
+		// QUERY BY SCHEDULED_DATE INDEX
+		if (args.fromScheduledDate && args.toScheduledDate) {
+			// omit [scheduledDate] filter
+			filters.scheduledDate = '';
+
 			queryOptions.index = 'namespace-scheduled-date';
-			queryOptions.queryExpression = '#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate';
+			queryOptions.queryExpression = '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate';
 
-			if (args.status) {
-				queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', '#status = :status');
-			}
-
-			const res = await this.db.tasks.query(queryOptions);
-
-			return {
-				...res,
-				items: _.map(res.items, taskShape)
-			};
+			return query(queryOptions);
 		}
 
-		if (args.status) {
-			// QUERY BY STATUS INDEX
-			queryOptions.index = 'namespace-status-event-pattern';
-			queryOptions.queryExpression = '#scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate';
-		}
+		queryOptions.queryExpression = '#namespace = :namespace';
 
-		const res = await this.db.tasks.query(queryOptions);
-
-		return {
-			...res,
-			items: _.map(res.items, taskShape)
-		};
+		return query(queryOptions);
 	}
 
 	async fetchLogs(input: Hooks.FetchLogsInput): Promise<Dynamodb.MultiResponse<Hooks.Log, false>> {
@@ -604,27 +662,134 @@ class Hooks {
 		return res ? taskShape(res) : null;
 	}
 
+	private async queryActiveTasks(args: Hooks.QueryActiveTasksInput) {
+		args = await queryActiveTasksInput.parseAsync(args);
+
+		const query = async (options: Dynamodb.QueryOptions<Hooks.Task>) => {
+			const res = await this.db.tasks.query(options);
+
+			return {
+				...res,
+				items: _.map(res.items, taskShape)
+			};
+		};
+
+		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
+			attributeNames: {
+				'#count': 'count',
+				'#execution': 'execution',
+				'#max': 'max',
+				'#noAfter': 'noAfter',
+				'#noBefore': 'noBefore',
+				'#pid': 'pid',
+				'#repeat': 'repeat',
+				'#status': 'status'
+			},
+			attributeValues: {
+				':active': 'ACTIVE',
+				':empty': '',
+				':now': args.date.toISOString(),
+				':zero': 0
+			},
+			chunkLimit: 100,
+			filterExpression: [
+				'attribute_not_exists(#pid)',
+				'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				'(#noBefore = :empty OR :now > #noBefore)',
+				'(#noAfter = :empty OR :now < #noAfter)'
+			].join(' AND '),
+			limit: Infinity,
+			onChunk: args.onChunk
+		};
+
+		if ('eventPattern' in args && args.eventPattern) {
+			queryOptions.index = 'status-namespace-event-pattern';
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#namespace__eventPattern': '__namespace__eventPattern'
+			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':namespace__eventPattern': `${args.namespace}#${args.eventPattern}`
+			};
+
+			queryOptions.queryExpression = [
+				'#status = :active',
+				args.eventPatternPrefix
+					? 'begins_with(#namespace__eventPattern, :namespace__eventPattern)'
+					: '#namespace__eventPattern = :namespace__eventPattern'
+			].join(' AND ');
+
+			return query(queryOptions);
+		}
+
+		if ('id' in args && args.id) {
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#id': 'id',
+				'#namespace': 'namespace'
+			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':id': args.id,
+				':namespace': args.namespace
+			};
+
+			queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', '#status = :active');
+			queryOptions.queryExpression = ['#namespace = :namespace', args.idPrefix ? 'begins_with(#id, :id)' : '#id = :id'].join(' AND ');
+
+			return query(queryOptions);
+		}
+
+		// by scheduleTime
+		queryOptions.index = 'status-scheduled-date';
+		queryOptions.attributeNames = {
+			...queryOptions.attributeNames,
+			'#scheduledDate': 'scheduledDate'
+		};
+
+		queryOptions.attributeValues = {
+			...queryOptions.attributeValues,
+			':startOfTimes': '0000-00-00T00:00:00.000Z'
+		};
+
+		queryOptions.queryExpression = '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now';
+
+		return query(queryOptions);
+	}
+
 	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
 		const args = await taskInput.parseAsync(input);
-		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : null;
+		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : '-';
 		const res = await this.db.tasks.put(
 			taskShape({
 				...args,
+				__namespace__eventPattern: args.eventPattern ? `${args.namespace}#${args.eventPattern}` : '-',
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastError: '',
+					lastErrorDate: '',
+					lastExecutionType: ''
+				},
+				eventPattern: args.eventPattern || '-',
 				execution: {
 					count: 0,
 					failed: 0,
-					firstExecutionDate: null,
+					firstExecutionDate: '',
 					firstScheduledDate: scheduledDate,
-					lastExecutionDate: null,
-					lastExecutionType: null,
+					lastExecutionDate: '',
+					lastExecutionType: '',
 					lastResponseBody: '',
 					lastResponseHeaders: {},
 					lastResponseStatus: 0,
 					successful: 0
 				},
 				id: this.uuid(args.idPrefix),
-				notAfter: args.notAfter ? new Date(args.notAfter).toISOString() : null,
-				notBefore: args.notBefore ? new Date(args.notBefore).toISOString() : null,
+				noAfter: args.noAfter ? new Date(args.noAfter).toISOString() : '',
+				noBefore: args.noBefore ? new Date(args.noBefore).toISOString() : '',
 				scheduledDate
 			})
 		);
@@ -634,19 +799,21 @@ class Hooks {
 
 	private async setTaskError(input: Hooks.SetTaskErrorInput) {
 		const args = await setTaskErrorInput.parseAsync(input);
+		const date = new Date();
 		const httpError = HttpError.wrap(args.error);
 		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 			attributeNames: {
 				'#count': 'count',
 				'#errors': 'errors',
 				'#lastError': 'lastError',
+				'#lastErrorDate': 'lastErrorDate',
 				'#lastExecutionType': 'lastExecutionType',
 				'#pid': 'pid'
 			},
 			attributeValues: {
 				':error': httpError.message,
 				':executionType': args.executionType,
-				':now': now,
+				':now': date.toISOString(),
 				':one': 1
 			},
 			filter: {
@@ -666,6 +833,7 @@ class Hooks {
 			};
 
 			updateOptions.attributeValues = {
+				...updateOptions.attributeValues,
 				':pid': args.pid,
 				':processing': 'PROCESSING'
 			};
@@ -691,7 +859,7 @@ class Hooks {
 		// set MAX_ERRORS_REACHED status if max errors reached
 		const nextErrorsCount = args.task.errors.count + 1;
 
-		if (nextErrorsCount >= this.maxErrors) {
+		if (this.maxErrors > 0 && nextErrorsCount >= this.maxErrors) {
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#status': 'status'
@@ -721,7 +889,49 @@ class Hooks {
 		return taskShape(await this.db.tasks.update(updateOptions));
 	}
 
-	private async setTaskSuccess(input: Hooks.SetTaskSuccessInput) {
+	private async setTaskLock(input: Hooks.SetTaskLockInput) {
+		const args = await setTaskLockInput.parseAsync(input);
+
+		return taskShape(
+			await this.db.tasks.update({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#max': 'max',
+					'#noAfter': 'noAfter',
+					'#noBefore': 'noBefore',
+					'#pid': 'pid',
+					'#repeat': 'repeat',
+					'#status': 'status'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':empty': '',
+					':now': args.date.toISOString(),
+					':pid': args.pid,
+					':processing': 'PROCESSING',
+					':zero': 0
+				},
+				// in case of other process already picked the task while it was being processed
+				conditionExpression: [
+					'attribute_not_exists(#pid)',
+					'#status = :active',
+					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+					'(#noBefore = :empty OR :now > #noBefore)',
+					'(#noAfter = :empty OR :now < #noAfter)'
+				].join(' AND '),
+				filter: {
+					item: {
+						namespace: args.task.namespace,
+						id: args.task.id
+					}
+				},
+				updateExpression: 'SET #status = :processing, #pid = :pid'
+			})
+		);
+	}
+
+	async setTaskSuccess(input: Hooks.SetTaskSuccessInput) {
 		const args = await setTaskSuccessInput.parseAsync(input);
 		const date = new Date();
 		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
@@ -795,8 +1005,13 @@ class Hooks {
 		const nextExecutionCount = args.task.execution.count + 1;
 		const repeat = args.task.repeat.max === 0 || nextExecutionCount < args.task.repeat.max;
 
-		if (repeat && args.task.scheduledDate) {
-			// keep ACTIVE status if repeat is enabled with a scheduled date
+		if (
+			(args.executionType === 'SCHEDULED' || (args.executionType === 'MANUAL' && args.task.rescheduleOnManualExecution)) &&
+			repeat &&
+			args.task.repeat.interval > 0 &&
+			args.task.scheduledDate
+		) {
+			// keep ACTIVE status and reschedule if can repeat and have scheduled date
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#scheduledDate': 'scheduledDate',
@@ -813,8 +1028,8 @@ class Hooks {
 				updateOptions.updateExpression || '',
 				'SET #scheduledDate = :scheduledDate, #status = :active'
 			);
-		} else if (repeat && !args.task.scheduledDate) {
-			// keep ACTIVE status if repeat is enabled but no scheduled date is provided
+		} else if (repeat) {
+			// keep ACTIVE status if can repeat
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#status': 'status'
@@ -827,7 +1042,7 @@ class Hooks {
 
 			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :active');
 		} else {
-			// set DONE status if repeat is disabled
+			// set DONE status if can't repeat
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#status': 'status'
@@ -842,48 +1057,6 @@ class Hooks {
 		}
 
 		return taskShape(await this.db.tasks.update(updateOptions));
-	}
-
-	private async setTaskLock(input: Hooks.SetTaskLockInput) {
-		const args = await setTaskLockInput.parseAsync(input);
-
-		return taskShape(
-			await this.db.tasks.update({
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#notAfter': 'notAfter',
-					'#notBefore': 'notBefore',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':now': args.date.toISOString(),
-					':null': null,
-					':pid': args.pid,
-					':processing': 'PROCESSING',
-					':zero': 0
-				},
-				// in case of other process already picked the task while it was being processed
-				conditionExpression: [
-					'#status = :active',
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
-					'(#notBefore = :null OR :now > #notBefore)',
-					'(#notAfter = :null OR :now < #notAfter)'
-				].join(' AND '),
-				filter: {
-					item: {
-						namespace: args.namespace,
-						id: args.id
-					}
-				},
-				updateExpression: 'SET #status = :processing, #pid = :pid'
-			})
-		);
 	}
 
 	async suspendTask(input: Hooks.GetInput): Promise<Hooks.Task | null> {
@@ -925,24 +1098,21 @@ class Hooks {
 				await Promise.all(
 					_.map(items, async item => {
 						try {
-							await this.db.tasks.client.send(
-								new UpdateCommand({
-									ConditionExpression: '#status = :active',
-									ExpressionAttributeNames: {
-										'#status': 'status'
-									},
-									ExpressionAttributeValues: {
-										':active': 'ACTIVE',
-										':suspended': 'SUSPENDED'
-									},
-									Key: {
+							await this.db.tasks.update({
+								attributeNames: { '#status': 'status' },
+								attributeValues: {
+									':active': 'ACTIVE',
+									':suspended': 'SUSPENDED'
+								},
+								conditionExpression: '#status = :active',
+								filter: {
+									item: {
 										namespace: item.namespace,
 										id: item.id
-									},
-									TableName: this.db.tasks.table,
-									UpdateExpression: 'SET #status = :suspended'
-								})
-							);
+									}
+								},
+								updateExpression: 'SET #status = :suspended'
+							});
 
 							suspended = [
 								...suspended,
@@ -966,229 +1136,104 @@ class Hooks {
 		};
 	}
 
-	async triggerManual(input: Hooks.TriggerManualInput): Promise<{ processed: number; errors: number }> {
-		const args = await triggerManualInput.parseAsync(input);
+	async trigger(input?: Hooks.TriggerManualInput): Promise<{ processed: number; errors: number }> {
 		const date = new Date();
 		const result = { processed: 0, errors: 0 };
 
 		try {
-			const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#notAfter': 'notAfter',
-					'#notBefore': 'notBefore',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':now': date.toISOString(),
-					':null': null,
-					':zero': 0
-				},
-				chunkLimit: 100,
-				filterExpression: [
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
-					'(#notBefore = :null OR :now > #notBefore)',
-					'(#notAfter = :null OR :now < #notAfter)'
-				].join(' AND '),
-				item: { namespace: args.namespace },
-				onChunk: async ({ items }) => {
-					let promiseTasks: (() => Promise<void>)[] = [];
-
-					for (const item of items) {
-						let task: Hooks.Task = taskShape(item);
-						let pid: string = '';
-
-						const promiseTask = async () => {
-							try {
-								// concurrency is disabled by default (exclusive execution)
-								if (!task.concurrency) {
-									// update task status to processing and set pid disallowing concurrency
-									pid = this.uuid();
-									task = await this.setTaskLock({
-										date,
-										id: task.id,
-										namespace: task.namespace,
-										pid
-									});
-								}
-
-								if (this.webhookCaller) {
-									await this.webhookCaller({
-										executionType: 'MANUAL',
-										pid,
-										task
-									});
-								} else {
-									await this.callWebhook({
-										executionType: 'MANUAL',
-										pid,
-										task
-									});
-								}
-
-								result.processed++;
-							} catch (err) {
-								if (err instanceof ConditionalCheckFailedException) {
-									return;
-								}
-
-								result.errors++;
-
-								await this.setTaskError({
-									error: err as Error,
-									executionType: 'MANUAL',
-									pid,
-									task
-								});
-							}
-						};
-
-						promiseTasks = [...promiseTasks, promiseTask];
-					}
-
-					await promiseAll(promiseTasks, this.maxConcurrency);
-				}
+			let queryActiveTasksOptions: Hooks.QueryActiveTasksInput = {
+				date,
+				onChunk: async () => {}
 			};
 
-			if ('eventPattern' in args && args.eventPattern) {
-				queryOptions.index = 'namespace-status-event-pattern';
-				queryOptions.attributeNames = {
-					...queryOptions.attributeNames,
-					'#status__eventPattern': 'status__eventPattern'
-				};
+			if (input) {
+				const args = await triggerManualInput.parseAsync(input);
 
-				queryOptions.attributeValues = {
-					...queryOptions.attributeValues,
-					':status__eventPattern': `ACTIVE#${args.eventPattern}`
-				};
-
-				queryOptions.queryExpression = args.eventPatternPrefix
-					? 'begins_with(#status__eventPattern, :eventPattern)'
-					: '#status__eventPattern = :eventPattern';
-			} else if ('id' in args && args.id) {
-				queryOptions.attributeNames = {
-					...queryOptions.attributeNames,
-					'#id': 'id',
-					'#status': 'status'
-				};
-
-				queryOptions.attributeValues = {
-					':active': 'ACTIVE',
-					':id': args.id
-				};
-
-				queryOptions.filterExpression = concatConditionExpression(queryOptions.filterExpression || '', '#status = :active');
-				queryOptions.queryExpression = args.idPrefix ? 'begins_with(#id, :id)' : '#id = :id';
+				if ('eventPattern' in args && args.eventPattern) {
+					queryActiveTasksOptions = {
+						...queryActiveTasksOptions,
+						eventPattern: args.eventPattern,
+						eventPatternPrefix: args.eventPatternPrefix,
+						namespace: args.namespace
+					};
+				} else if ('id' in args && args.id) {
+					queryActiveTasksOptions = {
+						...queryActiveTasksOptions,
+						id: args.id,
+						idPrefix: args.idPrefix,
+						namespace: args.namespace
+					};
+				}
 			}
 
-			await this.db.tasks.query(queryOptions);
-		} catch (err) {
-			console.error('Error processing tasks:', err);
-			throw err;
-		}
+			const executionType = _.some(['eventPattern', 'id'], key => {
+				return key in queryActiveTasksOptions;
+			})
+				? 'MANUAL'
+				: 'SCHEDULED';
 
-		return result;
-	}
+			queryActiveTasksOptions.onChunk = async ({ items }) => {
+				let promiseTasks: (() => Promise<void>)[] = [];
 
-	async triggerScheduled(): Promise<{ processed: number; errors: number }> {
-		const date = new Date();
-		const result = { processed: 0, errors: 0 };
+				for (const item of items) {
+					let pid: string = '';
+					let task: Hooks.Task = taskShape(item);
 
-		try {
-			const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
-				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
-					'#notAfter': 'notAfter',
-					'#notBefore': 'notBefore',
-					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#scheduledDate': 'scheduledDate',
-					'#status': 'status'
-				},
-				attributeValues: {
-					':active': 'ACTIVE',
-					':now': date.toISOString(),
-					':startOfTimes': '0000-00-00T00:00:00.000Z',
-					':zero': 0
-				},
-				chunkLimit: 100,
-				filterExpression: [
-					'attribute_not_exists(#pid)',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
-					'(#notBefore = :null OR :now > #notBefore)',
-					'(#notAfter = :null OR :now < #notAfter)'
-				].join(' AND '),
-				index: 'status-scheduled-date',
-				onChunk: async ({ items }) => {
-					let promiseTasks: (() => Promise<void>)[] = [];
-
-					for (const item of items) {
-						let task: Hooks.Task = taskShape(item);
-						let pid: string = '';
-
-						const promiseTask = async () => {
-							try {
-								// concurrency is disabled by default (exclusive execution)
-								if (!task.concurrency) {
-									// update task status to processing and set pid disallowing concurrency
-									pid = this.uuid();
-									task = await this.setTaskLock({
-										date,
-										id: task.id,
-										namespace: task.namespace,
-										pid
-									});
-								}
-
-								if (this.webhookCaller) {
-									await this.webhookCaller({
-										executionType: 'SCHEDULED',
-										pid,
-										task
-									});
-								} else {
-									await this.callWebhook({
-										executionType: 'SCHEDULED',
-										pid,
-										task
-									});
-								}
-
-								result.processed++;
-							} catch (err) {
-								if (err instanceof ConditionalCheckFailedException) {
-									return;
-								}
-
-								result.errors++;
-
-								await this.setTaskError({
-									error: err as Error,
-									executionType: 'SCHEDULED',
+					const promiseTask = async () => {
+						try {
+							// concurrency is disabled by default (exclusive execution)
+							if (!task.concurrency) {
+								// update task status to processing and set pid disallowing concurrency
+								pid = this.uuid();
+								task = await this.setTaskLock({
+									date,
 									pid,
 									task
 								});
 							}
-						};
 
-						promiseTasks = [...promiseTasks, promiseTask];
-					}
+							if (this.webhookCaller) {
+								await this.webhookCaller({
+									executionType,
+									pid,
+									task
+								});
+							} else {
+								await this.callWebhook({
+									executionType,
+									pid,
+									task
+								});
+							}
 
-					await promiseAll(promiseTasks, this.maxConcurrency);
-				},
-				queryExpression: '#status = :active AND #scheduledDate BETWEEN :startOfTimes AND :now'
+							result.processed++;
+						} catch (err) {
+							if (err instanceof ConditionalCheckFailedException) {
+								return;
+							}
+
+							result.errors++;
+
+							await this.setTaskError({
+								error: err as Error,
+								executionType,
+								pid,
+								task
+							});
+						}
+					};
+
+					promiseTasks = [...promiseTasks, promiseTask];
+				}
+
+				await promiseAll(promiseTasks, this.maxConcurrency);
 			};
 
-			await this.db.tasks.query(queryOptions);
+			await this.queryActiveTasks(queryActiveTasksOptions);
 		} catch (err) {
 			console.error('Error processing tasks:', err);
+			result.errors += 1;
+
 			throw err;
 		}
 
