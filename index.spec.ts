@@ -984,7 +984,7 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe.skip('fetchLogs', () => {
+	describe('fetchLogs', () => {
 		beforeAll(async () => {
 			await Promise.all(
 				_.map([createTestTask(), createTestTask(), createTestTask()], task => {
@@ -3304,7 +3304,7 @@ describe('/index.ts', () => {
 			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
 		});
 
-		it('should works with SCHEDULED', async () => {
+		it('should works SCHEDULED', async () => {
 			const res = await hooks.trigger();
 
 			// @ts-expect-error
@@ -3338,7 +3338,7 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should works with MANUAL by eventPattern', async () => {
+		it('should works MANUAL by eventPattern', async () => {
 			const res = await hooks.trigger({
 				eventPattern: 'event-pattern-',
 				eventPatternPrefix: true,
@@ -3379,7 +3379,7 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should works with MANUAL by eventPattern with [body, headers, method, url]', async () => {
+		it('should works MANUAL by eventPattern with [body, headers, method, url]', async () => {
 			const res = await hooks.trigger({
 				eventPattern: 'event-pattern-',
 				eventPatternPrefix: true,
@@ -3420,6 +3420,31 @@ describe('/index.ts', () => {
 
 			expect(res).toEqual({
 				processed: 2,
+				errors: 0
+			});
+		});
+
+		it('should works MANUAL with conditionFilter', async () => {
+			const res = await hooks.trigger({
+				conditionData: {
+					a: 'test'
+				},
+				conditionFilter: {
+					type: 'STRING',
+					path: ['a'],
+					operator: 'EQUALS',
+					value: 'test-1'
+				},
+				eventPattern: 'event-pattern-',
+				eventPatternPrefix: true,
+				namespace: 'spec'
+			});
+
+			// @ts-expect-error
+			expect(hooks.queryActiveTasks).not.toHaveBeenCalled();
+			expect(hooks.callWebhook).not.toHaveBeenCalled();
+			expect(res).toEqual({
+				processed: 0,
 				errors: 0
 			});
 		});

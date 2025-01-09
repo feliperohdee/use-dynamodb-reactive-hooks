@@ -1,5 +1,6 @@
 .DS_Store
 .npmrc
+.index.ts
 .test.sh
 .vscode
 coverage

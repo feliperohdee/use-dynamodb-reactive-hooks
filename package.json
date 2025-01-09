@@ -5,6 +5,7 @@
 		"use-async-helpers": "^1.0.15",
 		"use-dynamodb": "^1.0.52",
 		"use-dynamodb-webhooks": "^1.0.12",
+		"use-filter-criteria": "^1.0.16",
 		"use-http-error": "^1.0.1",
 		"zod": "^3.24.1",
 		"zod-default-instance": "^1.0.12"

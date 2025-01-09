@@ -3,6 +3,7 @@ import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAllSettled } from 'use-async-helpers';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import HttpError from 'use-http-error';
+import UseFilterCriteria from 'use-filter-criteria';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
@@ -243,8 +244,10 @@ const setTaskSuccessInput = z.object({
 });
 
 const log = Webhooks.schema.log;
-const triggerManualInput = z.union([
+const triggerInput = z.union([
 	z.object({
+		conditionData: z.record(z.any()).optional(),
+		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
 		id: z.string(),
 		idPrefix: z.boolean().default(false),
 		namespace: z.string(),
@@ -254,6 +257,8 @@ const triggerManualInput = z.union([
 		requestUrl: z.string().url().optional()
 	}),
 	z.object({
+		conditionData: z.record(z.any()).optional(),
+		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
 		eventPattern: z.string(),
 		eventPatternPrefix: z.boolean().default(false),
 		namespace: z.string(),
@@ -278,7 +283,7 @@ const schema = {
 	task,
 	taskInput,
 	taskStatus,
-	triggerManualInput
+	triggerInput
 };
 
 namespace Hooks {
@@ -308,7 +313,8 @@ namespace Hooks {
 	export type Task = z.infer<typeof task>;
 	export type TaskInput = z.input<typeof taskInput>;
 	export type TaskStatus = z.infer<typeof taskStatus>;
-	export type TriggerManualInput = z.input<typeof triggerManualInput>;
+	export type TriggerInput = z.input<typeof triggerInput>;
+	export type TriggerInputConditionFilter = UseFilterCriteria.MatchInput;
 }
 
 const taskShape = (input: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => {
@@ -1171,7 +1177,7 @@ class Hooks {
 		};
 	}
 
-	async trigger(input?: Hooks.TriggerManualInput): Promise<{ processed: number; errors: number }> {
+	async trigger(input?: Hooks.TriggerInput): Promise<{ processed: number; errors: number }> {
 		const date = new Date();
 		const result = { processed: 0, errors: 0 };
 
@@ -1194,7 +1200,13 @@ class Hooks {
 			};
 
 			if (input) {
-				const args = await triggerManualInput.parseAsync(input);
+				const args = await triggerInput.parseAsync(input);
+
+				if (args.conditionData && args.conditionFilter) {
+					if (!(await UseFilterCriteria.match(args.conditionData, args.conditionFilter))) {
+						return result;
+					}
+				}
 
 				request = {
 					body: args.requestBody || {},
@@ -1248,8 +1260,6 @@ class Hooks {
 								}
 							};
 						});
-
-						console.log(items);
 					}
 
 					if (this.customWebhookCall) {
