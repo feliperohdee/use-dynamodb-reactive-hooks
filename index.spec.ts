@@ -125,6 +125,311 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('callWebhook', () => {
+		beforeEach(async () => {
+			// @ts-expect-error
+			vi.spyOn(hooks, 'setTaskLock');
+			// @ts-expect-error
+			vi.spyOn(hooks, 'setTaskSuccess');
+			// @ts-expect-error
+			vi.spyOn(hooks, 'setTaskError');
+			vi.spyOn(hooks.webhooks, 'trigger');
+		});
+
+		afterEach(async () => {
+			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+		});
+
+		it('should works', async () => {
+			const task = await hooks.registerTask(
+				createTestTask(0, {
+					request: {
+						body: { a: 1 },
+						headers: { a: '1' },
+						method: 'POST',
+						url: 'https://httpbin.org/anything'
+					}
+				})
+			);
+
+			const res = await hooks.callWebhook({
+				date: new Date(),
+				executionType: 'MANUAL',
+				tasks: [task]
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskLock).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				pid: expect.any(String),
+				task
+			});
+
+			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				idPrefix: 'MANUAL',
+				namespace: 'spec',
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything',
+				retryLimit: 3
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
+				executionType: 'MANUAL',
+				pid: expect.any(String),
+				response: expect.any(Object),
+				task: {
+					...task,
+					__updatedAt: expect.any(String),
+					status: 'PROCESSING'
+				}
+			});
+
+			expect(res).toEqual([
+				{
+					...task,
+					execution: {
+						...task.execution,
+						count: 1,
+						firstExecutionDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'MANUAL',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						successful: 1
+					},
+					scheduledDate: expect.any(String),
+					__updatedAt: expect.any(String)
+				}
+			]);
+		});
+
+		it('should works with task.idPrefix', async () => {
+			let task = await hooks.registerTask(createTestTask());
+
+			task = taskShape(
+				await hooks.db.tasks.update({
+					attributeNames: { '#idPrefix': 'idPrefix' },
+					attributeValues: { ':idPrefix': 'test' },
+					filter: { item: { namespace: 'spec', id: task.id } },
+					updateExpression: 'SET #idPrefix = :idPrefix'
+				})
+			);
+
+			const res = await hooks.callWebhook({
+				date: new Date(),
+				executionType: 'MANUAL',
+				tasks: [task]
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskLock).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				pid: expect.any(String),
+				task
+			});
+
+			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				idPrefix: 'MANUAL#test',
+				namespace: 'spec',
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything',
+				retryLimit: 3
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
+				executionType: 'MANUAL',
+				pid: expect.any(String),
+				response: expect.any(Object),
+				task: {
+					...task,
+					__updatedAt: expect.any(String),
+					status: 'PROCESSING'
+				}
+			});
+
+			expect(res).toEqual([
+				{
+					...task,
+					execution: {
+						...task.execution,
+						count: 1,
+						firstExecutionDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'MANUAL',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						successful: 1
+					},
+					scheduledDate: expect.any(String),
+					__updatedAt: expect.any(String)
+				}
+			]);
+		});
+
+		it('should works with task.concurrency = true', async () => {
+			let task = await hooks.registerTask(createTestTask());
+
+			task = taskShape(
+				await hooks.db.tasks.update({
+					attributeNames: { '#concurrency': 'concurrency' },
+					attributeValues: { ':concurrency': true },
+					filter: {
+						item: { namespace: 'spec', id: task.id }
+					},
+					updateExpression: 'SET #concurrency = :concurrency'
+				})
+			);
+
+			const res = await hooks.callWebhook({
+				date: new Date(),
+				executionType: 'MANUAL',
+				tasks: [task]
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskLock).not.toHaveBeenCalled();
+			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				idPrefix: 'MANUAL',
+				namespace: 'spec',
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything',
+				retryLimit: 3
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
+				executionType: 'MANUAL',
+				pid: expect.any(String),
+				response: expect.any(Object),
+				task
+			});
+
+			expect(res).toEqual([
+				{
+					...task,
+					execution: {
+						...task.execution,
+						count: 1,
+						firstExecutionDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'MANUAL',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						successful: 1
+					},
+					scheduledDate: expect.any(String),
+					__updatedAt: expect.any(String)
+				}
+			]);
+		});
+
+		it('should handle ConditionalCheckFailedException', async () => {
+			let task = await hooks.registerTask(createTestTask());
+
+			task = taskShape(
+				await hooks.db.tasks.update({
+					attributeNames: {
+						'#pid': 'pid',
+						'#status': 'status'
+					},
+					attributeValues: {
+						':pid': 'other-pid',
+						':status': 'PROCESSING'
+					},
+					filter: {
+						item: { namespace: 'spec', id: task.id }
+					},
+					updateExpression: 'SET #pid = :pid, #status = :status'
+				})
+			);
+
+			const res = await hooks.callWebhook({
+				date: new Date(),
+				executionType: 'MANUAL',
+				tasks: [task]
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskLock).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				pid: expect.any(String),
+				task
+			});
+			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+
+			// @ts-expect-error
+			expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.setTaskError).not.toHaveBeenCalled();
+
+			expect(res).toEqual([]);
+		});
+
+		it('should handle exceptions', async () => {
+			vi.mocked(hooks.webhooks.trigger).mockRejectedValue(new Error('test'));
+
+			const task = await hooks.registerTask(createTestTask());
+			const res = await hooks.callWebhook({
+				date: new Date(),
+				executionType: 'MANUAL',
+				tasks: [task]
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskLock).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				pid: expect.any(String),
+				task
+			});
+			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				idPrefix: 'MANUAL',
+				namespace: 'spec',
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything',
+				retryLimit: 3
+			});
+
+			// @ts-expect-error
+			expect(hooks.setTaskError).toHaveBeenCalledWith({
+				error: new Error('test'),
+				executionType: 'MANUAL',
+				pid: expect.any(String),
+				task: {
+					...task,
+					__updatedAt: expect.any(String),
+					status: 'PROCESSING'
+				}
+			});
+
+			expect(res).toEqual([
+				{
+					...task,
+					errors: {
+						count: 1,
+						firstErrorDate: expect.any(String),
+						lastError: 'test',
+						lastErrorDate: expect.any(String),
+						lastExecutionType: 'MANUAL'
+					},
+					__updatedAt: expect.any(String)
+				}
+			]);
+		});
+	});
+
 	describe('clear', () => {
 		it('should clear namespace', async () => {
 			await Promise.all(
@@ -1578,6 +1883,7 @@ describe('/index.ts', () => {
 				attributeNames: {
 					'#count': 'count',
 					'#errors': 'errors',
+					'#firstErrorDate': 'firstErrorDate',
 					'#lastError': 'lastError',
 					'#lastErrorDate': 'lastErrorDate',
 					'#lastExecutionType': 'lastExecutionType',
@@ -1603,6 +1909,7 @@ describe('/index.ts', () => {
 						'#errors.#lastExecutionType = :executionType',
 						'#errors.#lastError = :error',
 						'#errors.#lastErrorDate = :now',
+						'#errors.#firstErrorDate = :now',
 						'#status = :active'
 					].join(', '),
 					'ADD',
@@ -1618,7 +1925,7 @@ describe('/index.ts', () => {
 				concurrency: false,
 				errors: {
 					count: 1,
-					firstErrorDate: '',
+					firstErrorDate: expect.any(String),
 					lastErrorDate: expect.any(String),
 					lastError: 'test',
 					lastExecutionType: 'MANUAL'
@@ -1655,7 +1962,7 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should set with concurrency = true', async () => {
+		it('should set with task.concurrency = true', async () => {
 			task = await hooks.db.tasks.update({
 				attributeNames: { '#concurrency': 'concurrency' },
 				attributeValues: { ':concurrency': true },
@@ -1678,6 +1985,7 @@ describe('/index.ts', () => {
 				attributeNames: {
 					'#count': 'count',
 					'#errors': 'errors',
+					'#firstErrorDate': 'firstErrorDate',
 					'#lastError': 'lastError',
 					'#lastErrorDate': 'lastErrorDate',
 					'#lastExecutionType': 'lastExecutionType',
@@ -1700,6 +2008,7 @@ describe('/index.ts', () => {
 						'#errors.#lastExecutionType = :executionType',
 						'#errors.#lastError = :error',
 						'#errors.#lastErrorDate = :now',
+						'#errors.#firstErrorDate = :now',
 						'#status = :active'
 					].join(', '),
 					'ADD',
@@ -1715,7 +2024,7 @@ describe('/index.ts', () => {
 				concurrency: true,
 				errors: {
 					count: 1,
-					firstErrorDate: '',
+					firstErrorDate: expect.any(String),
 					lastErrorDate: expect.any(String),
 					lastError: 'test',
 					lastExecutionType: 'MANUAL'
@@ -1781,6 +2090,7 @@ describe('/index.ts', () => {
 				attributeNames: {
 					'#count': 'count',
 					'#errors': 'errors',
+					'#firstErrorDate': 'firstErrorDate',
 					'#lastError': 'lastError',
 					'#lastErrorDate': 'lastErrorDate',
 					'#lastExecutionType': 'lastExecutionType',
@@ -1806,6 +2116,7 @@ describe('/index.ts', () => {
 						'#errors.#lastExecutionType = :executionType',
 						'#errors.#lastError = :error',
 						'#errors.#lastErrorDate = :now',
+						'#errors.#firstErrorDate = :now',
 						'#status = :maxErrorsReached'
 					].join(', '),
 					'ADD',
@@ -1821,7 +2132,7 @@ describe('/index.ts', () => {
 				concurrency: false,
 				errors: {
 					count: 1,
-					firstErrorDate: '',
+					firstErrorDate: expect.any(String),
 					lastErrorDate: expect.any(String),
 					lastError: 'test',
 					lastExecutionType: 'MANUAL'
@@ -1935,8 +2246,639 @@ describe('/index.ts', () => {
 			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
 		});
 
-		describe.todo('executionType = MANUAL', () => {
-			it('should set with response.ok = true', async () => {
+		it('should set', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: {
+					'#status': 'status',
+					'#pid': 'pid'
+				},
+				attributeValues: {
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #pid = :pid, #status = :processing'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskSuccess({
+				executionType: 'SCHEDULED',
+				pid: 'test',
+				task,
+				response: {
+					body: 'test',
+					headers: {},
+					ok: true,
+					status: 200
+				}
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#firstExecutionDate': 'firstExecutionDate',
+					'#lastExecutionDate': 'lastExecutionDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#lastResponseBody': 'lastResponseBody',
+					'#lastResponseHeaders': 'lastResponseHeaders',
+					'#lastResponseStatus': 'lastResponseStatus',
+					'#pid': 'pid',
+					'#scheduledDate': 'scheduledDate',
+					'#status': 'status',
+					'#successfulOrFailed': 'successful'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':executionType': 'SCHEDULED',
+					':now': expect.any(String),
+					':one': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING',
+					':responseBody': 'test',
+					':responseHeaders': {},
+					':responseStatus': 200,
+					':scheduledDate': expect.any(String)
+				},
+				conditionExpression: '#status = :processing AND #pid = :pid',
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					`SET ${[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastExecutionType = :executionType',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#scheduledDate = :scheduledDate',
+						'#status = :active'
+					].join(', ')}`,
+					`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+					`REMOVE #pid`
+				].join(' ')
+			});
+
+			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+			expect(scheduledDateDiff).toEqual(1800000); // 30 minutes
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastErrorDate: '',
+					lastError: '',
+					lastExecutionType: ''
+				},
+				eventPattern: '-',
+				execution: {
+					count: 1,
+					failed: 0,
+					firstExecutionDate: expect.any(String),
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: expect.any(String),
+					lastExecutionType: 'SCHEDULED',
+					lastResponseBody: 'test',
+					lastResponseHeaders: {},
+					lastResponseStatus: 200,
+					successful: 1
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: {
+					interval: 30,
+					max: 0,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE'
+			});
+		});
+
+		it('should set with task.concurrency = true', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: { '#concurrency': 'concurrency' },
+				attributeValues: { ':concurrency': true },
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #concurrency = :concurrency'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskSuccess({
+				executionType: 'SCHEDULED',
+				pid: 'test',
+				task,
+				response: {
+					body: 'test',
+					headers: {},
+					ok: true,
+					status: 200
+				}
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#firstExecutionDate': 'firstExecutionDate',
+					'#lastExecutionDate': 'lastExecutionDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#lastResponseBody': 'lastResponseBody',
+					'#lastResponseHeaders': 'lastResponseHeaders',
+					'#lastResponseStatus': 'lastResponseStatus',
+					'#pid': 'pid',
+					'#scheduledDate': 'scheduledDate',
+					'#status': 'status',
+					'#successfulOrFailed': 'successful'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':executionType': 'SCHEDULED',
+					':now': expect.any(String),
+					':one': 1,
+					':responseBody': 'test',
+					':responseHeaders': {},
+					':responseStatus': 200,
+					':scheduledDate': expect.any(String)
+				},
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					`SET ${[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastExecutionType = :executionType',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#scheduledDate = :scheduledDate',
+						'#status = :active'
+					].join(', ')}`,
+					`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+					`REMOVE #pid`
+				].join(' ')
+			});
+
+			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+			expect(scheduledDateDiff).toEqual(1800000); // 30 minutes
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: true,
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastErrorDate: '',
+					lastError: '',
+					lastExecutionType: ''
+				},
+				eventPattern: '-',
+				execution: {
+					count: 1,
+					failed: 0,
+					firstExecutionDate: expect.any(String),
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: expect.any(String),
+					lastExecutionType: 'SCHEDULED',
+					lastResponseBody: 'test',
+					lastResponseHeaders: {},
+					lastResponseStatus: 200,
+					successful: 1
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: {
+					interval: 30,
+					max: 0,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE'
+			});
+		});
+
+		it('should set with response.ok = false', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: {
+					'#status': 'status',
+					'#pid': 'pid'
+				},
+				attributeValues: {
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #pid = :pid, #status = :processing'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskSuccess({
+				executionType: 'SCHEDULED',
+				pid: 'test',
+				task,
+				response: {
+					body: 'test',
+					headers: {},
+					ok: false,
+					status: 400
+				}
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#firstExecutionDate': 'firstExecutionDate',
+					'#lastExecutionDate': 'lastExecutionDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#lastResponseBody': 'lastResponseBody',
+					'#lastResponseHeaders': 'lastResponseHeaders',
+					'#lastResponseStatus': 'lastResponseStatus',
+					'#pid': 'pid',
+					'#scheduledDate': 'scheduledDate',
+					'#status': 'status',
+					'#successfulOrFailed': 'failed'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':executionType': 'SCHEDULED',
+					':now': expect.any(String),
+					':one': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING',
+					':responseBody': 'test',
+					':responseHeaders': {},
+					':responseStatus': 400,
+					':scheduledDate': expect.any(String)
+				},
+				conditionExpression: '#status = :processing AND #pid = :pid',
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					`SET ${[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastExecutionType = :executionType',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#scheduledDate = :scheduledDate',
+						'#status = :active'
+					].join(', ')}`,
+					`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+					`REMOVE #pid`
+				].join(' ')
+			});
+
+			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+			expect(scheduledDateDiff).toEqual(1800000); // 30 minutes
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastErrorDate: '',
+					lastError: '',
+					lastExecutionType: ''
+				},
+				eventPattern: '-',
+				execution: {
+					count: 1,
+					failed: 1,
+					firstExecutionDate: expect.any(String),
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: expect.any(String),
+					lastExecutionType: 'SCHEDULED',
+					lastResponseBody: 'test',
+					lastResponseHeaders: {},
+					lastResponseStatus: 400,
+					successful: 0
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: {
+					interval: 30,
+					max: 0,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE'
+			});
+		});
+
+		it('should set with task.repeat.interval = 0', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: {
+					'#interval': 'interval',
+					'#repeat': 'repeat',
+					'#status': 'status',
+					'#pid': 'pid'
+				},
+				attributeValues: {
+					':interval': 0,
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #repeat.#interval = :interval, #pid = :pid, #status = :processing'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskSuccess({
+				executionType: 'SCHEDULED',
+				pid: 'test',
+				task,
+				response: {
+					body: 'test',
+					headers: {},
+					ok: true,
+					status: 200
+				}
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#firstExecutionDate': 'firstExecutionDate',
+					'#lastExecutionDate': 'lastExecutionDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#lastResponseBody': 'lastResponseBody',
+					'#lastResponseHeaders': 'lastResponseHeaders',
+					'#lastResponseStatus': 'lastResponseStatus',
+					'#pid': 'pid',
+					'#status': 'status',
+					'#successfulOrFailed': 'successful'
+				},
+				attributeValues: {
+					':active': 'ACTIVE',
+					':executionType': 'SCHEDULED',
+					':now': expect.any(String),
+					':one': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING',
+					':responseBody': 'test',
+					':responseHeaders': {},
+					':responseStatus': 200
+				},
+				conditionExpression: '#status = :processing AND #pid = :pid',
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					`SET ${[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastExecutionType = :executionType',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#status = :active'
+					].join(', ')}`,
+					`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+					`REMOVE #pid`
+				].join(' ')
+			});
+
+			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+			expect(scheduledDateDiff).toEqual(0);
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastErrorDate: '',
+					lastError: '',
+					lastExecutionType: ''
+				},
+				eventPattern: '-',
+				execution: {
+					count: 1,
+					failed: 0,
+					firstExecutionDate: expect.any(String),
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: expect.any(String),
+					lastExecutionType: 'SCHEDULED',
+					lastResponseBody: 'test',
+					lastResponseHeaders: {},
+					lastResponseStatus: 200,
+					successful: 1
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: {
+					interval: 0,
+					max: 0,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE'
+			});
+		});
+
+		it('should set with task.repeat.max = 1', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: {
+					'#max': 'max',
+					'#repeat': 'repeat',
+					'#status': 'status',
+					'#pid': 'pid'
+				},
+				attributeValues: {
+					':max': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING'
+				},
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #repeat.#max = :max, #pid = :pid, #status = :processing'
+			});
+			vi.mocked(hooks.db.tasks.update).mockClear();
+
+			// @ts-expect-error
+			const res = await hooks.setTaskSuccess({
+				executionType: 'SCHEDULED',
+				pid: 'test',
+				task,
+				response: {
+					body: 'test',
+					headers: {},
+					ok: true,
+					status: 200
+				}
+			});
+
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#count': 'count',
+					'#execution': 'execution',
+					'#firstExecutionDate': 'firstExecutionDate',
+					'#lastExecutionDate': 'lastExecutionDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#lastResponseBody': 'lastResponseBody',
+					'#lastResponseHeaders': 'lastResponseHeaders',
+					'#lastResponseStatus': 'lastResponseStatus',
+					'#pid': 'pid',
+					'#status': 'status',
+					'#successfulOrFailed': 'successful'
+				},
+				attributeValues: {
+					':executionType': 'SCHEDULED',
+					':maxRepeatReached': 'MAX_REPEAT_REACHED',
+					':now': expect.any(String),
+					':one': 1,
+					':pid': 'test',
+					':processing': 'PROCESSING',
+					':responseBody': 'test',
+					':responseHeaders': {},
+					':responseStatus': 200
+				},
+				conditionExpression: '#status = :processing AND #pid = :pid',
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: [
+					`SET ${[
+						'#execution.#lastExecutionDate = :now',
+						'#execution.#lastExecutionType = :executionType',
+						'#execution.#lastResponseBody = :responseBody',
+						'#execution.#lastResponseHeaders = :responseHeaders',
+						'#execution.#lastResponseStatus = :responseStatus',
+						'#execution.#firstExecutionDate = :now',
+						'#status = :maxRepeatReached'
+					].join(', ')}`,
+					`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+					`REMOVE #pid`
+				].join(' ')
+			});
+
+			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - new Date(task.scheduledDate).getTime();
+
+			expect(scheduledDateDiff).toEqual(0);
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__eventPattern: '-',
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				errors: {
+					count: 0,
+					firstErrorDate: '',
+					lastErrorDate: '',
+					lastError: '',
+					lastExecutionType: ''
+				},
+				eventPattern: '-',
+				execution: {
+					count: 1,
+					failed: 0,
+					firstExecutionDate: expect.any(String),
+					firstScheduledDate: expect.any(String),
+					lastExecutionDate: expect.any(String),
+					lastExecutionType: 'SCHEDULED',
+					lastResponseBody: 'test',
+					lastResponseHeaders: {},
+					lastResponseStatus: 200,
+					successful: 1
+				},
+				id: expect.any(String),
+				idPrefix: '',
+				namespace: 'spec',
+				noAfter: '',
+				noBefore: '',
+				repeat: {
+					interval: 30,
+					max: 1,
+					unit: 'minutes'
+				},
+				request: {
+					body: null,
+					headers: null,
+					method: 'POST',
+					url: 'https://httpbin.org/anything'
+				},
+				rescheduleOnManualExecution: true,
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'MAX_REPEAT_REACHED'
+			});
+		});
+
+		describe('executionType = MANUAL', () => {
+			it('should set', async () => {
 				task = await hooks.db.tasks.update({
 					attributeNames: {
 						'#status': 'status',
@@ -1953,6 +2895,7 @@ describe('/index.ts', () => {
 				});
 				vi.mocked(hooks.db.tasks.update).mockClear();
 
+				// @ts-expect-error
 				const res = await hooks.setTaskSuccess({
 					executionType: 'MANUAL',
 					pid: 'test',
@@ -1969,6 +2912,7 @@ describe('/index.ts', () => {
 					attributeNames: {
 						'#count': 'count',
 						'#execution': 'execution',
+						'#firstExecutionDate': 'firstExecutionDate',
 						'#lastExecutionDate': 'lastExecutionDate',
 						'#lastExecutionType': 'lastExecutionType',
 						'#lastResponseBody': 'lastResponseBody',
@@ -2002,6 +2946,7 @@ describe('/index.ts', () => {
 							'#execution.#lastResponseBody = :responseBody',
 							'#execution.#lastResponseHeaders = :responseHeaders',
 							'#execution.#lastResponseStatus = :responseStatus',
+							'#execution.#firstExecutionDate = :now',
 							'#scheduledDate = :scheduledDate',
 							'#status = :active'
 						].join(', ')}`,
@@ -2029,7 +2974,7 @@ describe('/index.ts', () => {
 					execution: {
 						count: 1,
 						failed: 0,
-						firstExecutionDate: '',
+						firstExecutionDate: expect.any(String),
 						firstScheduledDate: expect.any(String),
 						lastExecutionDate: expect.any(String),
 						lastExecutionType: 'MANUAL',
@@ -2061,7 +3006,7 @@ describe('/index.ts', () => {
 				});
 			});
 
-			it('should set with response.ok = false and task.rescheduleOnManualExecution = false', async () => {
+			it('should set with task.rescheduleOnManualExecution = false', async () => {
 				task = await hooks.db.tasks.update({
 					attributeNames: {
 						'#status': 'status',
@@ -2080,6 +3025,7 @@ describe('/index.ts', () => {
 				});
 				vi.mocked(hooks.db.tasks.update).mockClear();
 
+				// @ts-expect-error
 				const res = await hooks.setTaskSuccess({
 					executionType: 'MANUAL',
 					pid: 'test',
@@ -2087,7 +3033,7 @@ describe('/index.ts', () => {
 					response: {
 						body: 'test',
 						headers: {},
-						ok: false,
+						ok: true,
 						status: 200
 					}
 				});
@@ -2099,6 +3045,7 @@ describe('/index.ts', () => {
 					attributeNames: {
 						'#count': 'count',
 						'#execution': 'execution',
+						'#firstExecutionDate': 'firstExecutionDate',
 						'#lastExecutionDate': 'lastExecutionDate',
 						'#lastExecutionType': 'lastExecutionType',
 						'#lastResponseBody': 'lastResponseBody',
@@ -2106,7 +3053,7 @@ describe('/index.ts', () => {
 						'#lastResponseStatus': 'lastResponseStatus',
 						'#pid': 'pid',
 						'#status': 'status',
-						'#successfulOrFailed': 'failed'
+						'#successfulOrFailed': 'successful'
 					},
 					attributeValues: {
 						':active': 'ACTIVE',
@@ -2130,6 +3077,7 @@ describe('/index.ts', () => {
 							'#execution.#lastResponseBody = :responseBody',
 							'#execution.#lastResponseHeaders = :responseHeaders',
 							'#execution.#lastResponseStatus = :responseStatus',
+							'#execution.#firstExecutionDate = :now',
 							'#status = :active'
 						].join(', ')}`,
 						`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
@@ -2152,15 +3100,15 @@ describe('/index.ts', () => {
 					eventPattern: '-',
 					execution: {
 						count: 1,
-						failed: 1,
-						firstExecutionDate: '',
+						failed: 0,
+						firstExecutionDate: expect.any(String),
 						firstScheduledDate: expect.any(String),
 						lastExecutionDate: expect.any(String),
 						lastExecutionType: 'MANUAL',
 						lastResponseBody: 'test',
 						lastResponseHeaders: {},
 						lastResponseStatus: 200,
-						successful: 0
+						successful: 1
 					},
 					id: expect.any(String),
 					idPrefix: '',
@@ -2184,8 +3132,6 @@ describe('/index.ts', () => {
 					status: 'ACTIVE'
 				});
 			});
-
-			it('should set with task.repeat.interval = 0', async () => {});
 		});
 	});
 
@@ -2316,7 +3262,254 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe.todo('trigger', () => {});
+	describe('trigger', () => {
+		beforeEach(async () => {
+			await Promise.all(
+				_.map(
+					[
+						createTestTask(0, {
+							eventPattern: 'event-pattern-1',
+							idPrefix: 'id-prefix-1',
+							request: {
+								body: { a: 1 },
+								headers: { a: '1' },
+								method: 'GET',
+								url: 'https://httpbin.org/anything'
+							}
+						}),
+						createTestTask(0, {
+							eventPattern: 'event-pattern-2',
+							idPrefix: 'id-prefix-2',
+							request: {
+								body: { a: 1 },
+								headers: { a: '1' },
+								method: 'GET',
+								url: 'https://httpbin.org/anything'
+							}
+						}),
+						createTestTask(1000)
+					],
+					task => {
+						return hooks.registerTask(task);
+					}
+				)
+			);
+
+			vi.spyOn(hooks, 'callWebhook');
+			// @ts-expect-error
+			vi.spyOn(hooks, 'queryActiveTasks');
+		});
+
+		afterEach(async () => {
+			await Promise.all([hooks.clear('spec'), hooks.webhooks.clearLogs('spec')]);
+		});
+
+		it('should works with SCHEDULED', async () => {
+			const res = await hooks.trigger();
+
+			// @ts-expect-error
+			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				onChunk: expect.any(Function)
+			});
+
+			expect(hooks.callWebhook).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				executionType: 'SCHEDULED',
+				tasks: expect.any(Array)
+			});
+
+			const { tasks } = vi.mocked(hooks.callWebhook).mock.calls[0][0];
+
+			expect(
+				_.every(tasks, task => {
+					return (
+						_.isEqual(task.request.body, { a: 1 }) &&
+						_.isEqual(task.request.headers, { a: '1' }) &&
+						task.request.method === 'GET' &&
+						task.request.url === 'https://httpbin.org/anything'
+					);
+				})
+			).toBe(true);
+
+			expect(res).toEqual({
+				processed: 2,
+				errors: 0
+			});
+		});
+
+		it('should works with MANUAL by eventPattern', async () => {
+			const res = await hooks.trigger({
+				eventPattern: 'event-pattern-',
+				eventPatternPrefix: true,
+				namespace: 'spec'
+			});
+
+			// @ts-expect-error
+			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				eventPattern: 'event-pattern-',
+				eventPatternPrefix: true,
+				namespace: 'spec',
+				onChunk: expect.any(Function)
+			});
+
+			expect(hooks.callWebhook).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				executionType: 'MANUAL',
+				tasks: expect.any(Array)
+			});
+
+			const { tasks } = vi.mocked(hooks.callWebhook).mock.calls[0][0];
+
+			expect(
+				_.every(tasks, task => {
+					return (
+						_.isEqual(task.request.body, { a: 1 }) &&
+						_.isEqual(task.request.headers, { a: '1' }) &&
+						task.request.method === 'GET' &&
+						task.request.url === 'https://httpbin.org/anything'
+					);
+				})
+			).toBe(true);
+
+			expect(res).toEqual({
+				processed: 2,
+				errors: 0
+			});
+		});
+
+		it('should works with MANUAL by eventPattern with [body, headers, method, url]', async () => {
+			const res = await hooks.trigger({
+				eventPattern: 'event-pattern-',
+				eventPatternPrefix: true,
+				namespace: 'spec',
+				requestBody: { a: 2, b: 3 },
+				requestHeaders: { a: '2', b: '3' },
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything-2'
+			});
+
+			// @ts-expect-error
+			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				eventPattern: 'event-pattern-',
+				eventPatternPrefix: true,
+				namespace: 'spec',
+				onChunk: expect.any(Function)
+			});
+
+			expect(hooks.callWebhook).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				executionType: 'MANUAL',
+				tasks: expect.any(Array)
+			});
+
+			const { tasks } = vi.mocked(hooks.callWebhook).mock.calls[0][0];
+
+			expect(
+				_.every(tasks, task => {
+					return (
+						_.isEqual(task.request.body, { a: 2, b: 3 }) &&
+						_.isEqual(task.request.headers, { a: '2', b: '3' }) &&
+						task.request.method === 'POST' &&
+						task.request.url === 'https://httpbin.org/anything-2'
+					);
+				})
+			).toBe(true);
+
+			expect(res).toEqual({
+				processed: 2,
+				errors: 0
+			});
+		});
+
+		it('should works MANUAL by id', async () => {
+			const res = await hooks.trigger({
+				id: 'id-prefix-',
+				idPrefix: true,
+				namespace: 'spec'
+			});
+
+			// @ts-expect-error
+			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				id: 'id-prefix-',
+				idPrefix: true,
+				namespace: 'spec',
+				onChunk: expect.any(Function)
+			});
+
+			expect(hooks.callWebhook).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				executionType: 'MANUAL',
+				tasks: expect.any(Array)
+			});
+
+			const { tasks } = vi.mocked(hooks.callWebhook).mock.calls[0][0];
+
+			expect(
+				_.every(tasks, task => {
+					return (
+						_.isEqual(task.request.body, { a: 1 }) &&
+						_.isEqual(task.request.headers, { a: '1' }) &&
+						task.request.method === 'GET' &&
+						task.request.url === 'https://httpbin.org/anything'
+					);
+				})
+			).toBe(true);
+
+			expect(res).toEqual({
+				processed: 2,
+				errors: 0
+			});
+		});
+
+		it('should works MANUAL by id with [body, headers, method, url]', async () => {
+			const res = await hooks.trigger({
+				id: 'id-prefix-',
+				idPrefix: true,
+				namespace: 'spec',
+				requestBody: { a: 2, b: 3 },
+				requestHeaders: { a: '2', b: '3' },
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything-2'
+			});
+
+			// @ts-expect-error
+			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				id: 'id-prefix-',
+				idPrefix: true,
+				namespace: 'spec',
+				onChunk: expect.any(Function)
+			});
+
+			expect(hooks.callWebhook).toHaveBeenCalledWith({
+				date: expect.any(Date),
+				executionType: 'MANUAL',
+				tasks: expect.any(Array)
+			});
+
+			const { tasks } = vi.mocked(hooks.callWebhook).mock.calls[0][0];
+
+			expect(
+				_.every(tasks, task => {
+					return (
+						_.isEqual(task.request.body, { a: 2, b: 3 }) &&
+						_.isEqual(task.request.headers, { a: '2', b: '3' }) &&
+						task.request.method === 'POST' &&
+						task.request.url === 'https://httpbin.org/anything-2'
+					);
+				})
+			).toBe(true);
+
+			expect(res).toEqual({
+				processed: 2,
+				errors: 0
+			});
+		});
+	});
 
 	describe('unsuspendTask', () => {
 		beforeEach(() => {
@@ -2394,6 +3587,4 @@ describe('/index.ts', () => {
 			expect(uuid).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
 		});
 	});
-
-	describe.todo('webhookCaller', () => {});
 });

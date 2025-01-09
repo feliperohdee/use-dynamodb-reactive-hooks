@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { promiseAll } from 'use-async-helpers';
+import { promiseAllSettled } from 'use-async-helpers';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import HttpError from 'use-http-error';
 import Webhooks from 'use-dynamodb-webhooks';
@@ -140,9 +140,9 @@ const taskInput = task
 	);
 
 const callWebhookInput = z.object({
+	date: z.date(),
 	executionType,
-	pid: z.string(),
-	task
+	tasks: z.array(task)
 });
 
 const deleteInput = z.object({
@@ -245,8 +245,8 @@ const setTaskSuccessInput = z.object({
 const log = Webhooks.schema.log;
 const triggerManualInput = z.union([
 	z.object({
-		id: z.string().optional(),
-		idPrefix: z.boolean().optional(),
+		id: z.string(),
+		idPrefix: z.boolean().default(false),
 		namespace: z.string(),
 		requestBody: z.record(z.any()).optional(),
 		requestHeaders: z.record(z.string()).optional(),
@@ -292,7 +292,7 @@ namespace Hooks {
 		region: string;
 		secretAccessKey: string;
 		tasksTableName: string;
-		webhookCaller?: (input: Hooks.CallWebhookInput) => Promise<void>;
+		webhookCaller?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
 	};
 
 	export type CallWebhookInput = z.input<typeof callWebhookInput>;
@@ -318,10 +318,10 @@ const taskShape = (input: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => 
 class Hooks {
 	public static schema = schema;
 
+	public customWebhookCall?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
 	public db: { tasks: Dynamodb<Hooks.Task> };
 	public maxConcurrency: number;
 	public maxErrors: number;
-	public webhookCaller?: (input: Hooks.CallWebhookInput) => Promise<void>;
 	public webhooks: Webhooks;
 
 	constructor(options: Hooks.ConstructorOptions) {
@@ -385,10 +385,10 @@ class Hooks {
 			})();
 		}
 
+		this.customWebhookCall = options.webhookCaller;
 		this.db = { tasks };
 		this.maxConcurrency = options.maxConcurrency || DEFAULT_CONCURRENCY;
 		this.maxErrors = options.maxErrors || 5;
-		this.webhookCaller = options.webhookCaller;
 		this.webhooks = webhooks;
 	}
 
@@ -413,32 +413,66 @@ class Hooks {
 		return next.toISOString();
 	}
 
-	async callWebhook(input: Hooks.CallWebhookInput) {
-		try {
-			const args = await callWebhookInput.parseAsync(input);
-			const { response } = await this.webhooks.trigger({
-				idPrefix: _.compact([args.executionType, args.task.idPrefix]).join('#'),
-				namespace: args.task.namespace,
-				requestBody: args.task.request.body,
-				requestHeaders: args.task.request.headers,
-				requestMethod: args.task.request.method,
-				requestUrl: args.task.request.url,
-				retryLimit: args.task.retryLimit
-			});
+	async callWebhook(input: Hooks.CallWebhookInput): Promise<Hooks.Task[]> {
+		let args = await callWebhookInput.parseAsync(input);
+		let promiseTasks: (() => Promise<Hooks.Task | null>)[] = [];
 
-			return await this.setTaskSuccess({
-				executionType: args.executionType,
-				pid: args.pid,
-				response,
-				task: args.task
-			});
-		} catch (err) {
-			if (err instanceof ConditionalCheckFailedException) {
-				return null;
+		for (const item of args.tasks) {
+			let pid = this.uuid();
+			let task: Hooks.Task = taskShape(item);
+
+			const promiseTask = async () => {
+				try {
+					// concurrency is disabled by default (exclusive execution)
+					if (!task.concurrency) {
+						// update task status to processing and set pid disallowing concurrency
+						task = await this.setTaskLock({
+							date: args.date,
+							pid,
+							task
+						});
+					}
+
+					const { response } = await this.webhooks.trigger({
+						idPrefix: _.compact([args.executionType, task.idPrefix]).join('#'),
+						namespace: task.namespace,
+						requestBody: task.request.body,
+						requestHeaders: task.request.headers,
+						requestMethod: task.request.method,
+						requestUrl: task.request.url,
+						retryLimit: task.retryLimit
+					});
+
+					task = await this.setTaskSuccess({
+						executionType: args.executionType,
+						pid,
+						response,
+						task
+					});
+				} catch (err) {
+					if (err instanceof ConditionalCheckFailedException) {
+						return null;
+					}
+
+					task = await this.setTaskError({
+						error: err as Error,
+						executionType: args.executionType,
+						pid,
+						task
+					});
+				}
+
+				return task;
+			};
+
+			if (promiseTask) {
+				promiseTasks = [...promiseTasks, promiseTask];
 			}
-
-			throw err;
 		}
+
+		const res = await promiseAllSettled(promiseTasks, this.maxConcurrency);
+
+		return _.compact(_.map(res, 'value'));
 	}
 
 	async clear(namespace: string): Promise<{ count: number }> {
@@ -847,7 +881,7 @@ class Hooks {
 			`REMOVE #pid`
 		].join(' ');
 
-		if (args.task.errors.firstErrorDate === null) {
+		if (args.task.errors.firstErrorDate === '') {
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#firstErrorDate': 'firstErrorDate'
@@ -931,7 +965,7 @@ class Hooks {
 		);
 	}
 
-	async setTaskSuccess(input: Hooks.SetTaskSuccessInput) {
+	private async setTaskSuccess(input: Hooks.SetTaskSuccessInput) {
 		const args = await setTaskSuccessInput.parseAsync(input);
 		const date = new Date();
 		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
@@ -943,6 +977,7 @@ class Hooks {
 				'#lastResponseBody': 'lastResponseBody',
 				'#lastResponseHeaders': 'lastResponseHeaders',
 				'#lastResponseStatus': 'lastResponseStatus',
+				'#pid': 'pid',
 				'#successfulOrFailed': args.response.ok ? 'successful' : 'failed'
 			},
 			attributeValues: {
@@ -990,7 +1025,7 @@ class Hooks {
 			updateOptions.conditionExpression = '#status = :processing AND #pid = :pid';
 		}
 
-		if (args.task.execution.firstExecutionDate === null) {
+		if (args.task.execution.firstExecutionDate === '') {
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#firstExecutionDate': 'firstExecutionDate'
@@ -1050,10 +1085,10 @@ class Hooks {
 
 			updateOptions.attributeValues = {
 				...updateOptions.attributeValues,
-				':done': 'DONE'
+				':maxRepeatReached': 'MAX_REPEAT_REACHED'
 			};
 
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :done');
+			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :maxRepeatReached');
 		}
 
 		return taskShape(await this.db.tasks.update(updateOptions));
@@ -1146,8 +1181,27 @@ class Hooks {
 				onChunk: async () => {}
 			};
 
+			let request: {
+				body: Record<string, any>;
+				headers: Record<string, any>;
+				method: Webhooks.RequestMethod | '';
+				url: string;
+			} = {
+				body: {},
+				headers: {},
+				method: '',
+				url: ''
+			};
+
 			if (input) {
 				const args = await triggerManualInput.parseAsync(input);
+
+				request = {
+					body: args.requestBody || {},
+					headers: args.requestHeaders || {},
+					method: args.requestMethod || '',
+					url: args.requestUrl || ''
+				};
 
 				if ('eventPattern' in args && args.eventPattern) {
 					queryActiveTasksOptions = {
@@ -1172,64 +1226,51 @@ class Hooks {
 				? 'MANUAL'
 				: 'SCHEDULED';
 
-			queryActiveTasksOptions.onChunk = async ({ items }) => {
-				let promiseTasks: (() => Promise<void>)[] = [];
+			await this.queryActiveTasks({
+				...queryActiveTasksOptions,
+				onChunk: async ({ items }) => {
+					if (executionType === 'MANUAL') {
+						items = _.map(items, item => {
+							return {
+								...item,
+								request: {
+									...item.request,
+									body: {
+										...item.request.body,
+										...request.body
+									},
+									headers: {
+										...item.request.headers,
+										...request.headers
+									},
+									method: request.method || item.request.method,
+									url: request.url || item.request.url
+								}
+							};
+						});
 
-				for (const item of items) {
-					let pid: string = '';
-					let task: Hooks.Task = taskShape(item);
+						console.log(items);
+					}
 
-					const promiseTask = async () => {
-						try {
-							// concurrency is disabled by default (exclusive execution)
-							if (!task.concurrency) {
-								// update task status to processing and set pid disallowing concurrency
-								pid = this.uuid();
-								task = await this.setTaskLock({
-									date,
-									pid,
-									task
-								});
-							}
+					if (this.customWebhookCall) {
+						const res = await this.customWebhookCall({
+							date,
+							executionType,
+							tasks: items
+						});
 
-							if (this.webhookCaller) {
-								await this.webhookCaller({
-									executionType,
-									pid,
-									task
-								});
-							} else {
-								await this.callWebhook({
-									executionType,
-									pid,
-									task
-								});
-							}
+						result.processed += _.size(res);
+					} else {
+						const res = await this.callWebhook({
+							date,
+							executionType,
+							tasks: items
+						});
 
-							result.processed++;
-						} catch (err) {
-							if (err instanceof ConditionalCheckFailedException) {
-								return;
-							}
-
-							result.errors++;
-
-							await this.setTaskError({
-								error: err as Error,
-								executionType,
-								pid,
-								task
-							});
-						}
-					};
-
-					promiseTasks = [...promiseTasks, promiseTask];
+						result.processed += _.size(res);
+					}
 				}
-
-				await promiseAll(promiseTasks, this.maxConcurrency);
-			};
-
-			await this.queryActiveTasks(queryActiveTasksOptions);
+			});
 		} catch (err) {
 			console.error('Error processing tasks:', err);
 			result.errors += 1;
