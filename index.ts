@@ -8,283 +8,12 @@ import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
 
+import schema from './index.schema';
+
 const DEFAULT_CONCURRENCY = 25;
 const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
-
-const executionType = z.enum(['MANUAL', 'SCHEDULED']);
-const taskStatus = z.enum(['ACTIVE', 'MAX_ERRORS_REACHED', 'MAX_REPEAT_REACHED', 'SUSPENDED', 'PROCESSING']);
-const task = z.object({
-	__createdAt: z
-		.string()
-		.datetime()
-		.default(() => {
-			return new Date().toISOString();
-		}),
-	__namespace__eventPattern: z.union([z.string(), z.literal('-')]),
-	__updatedAt: z
-		.string()
-		.datetime()
-		.default(() => {
-			return new Date().toISOString();
-		}),
-	concurrency: z.boolean().default(false),
-	errors: z.object({
-		count: z.number(),
-		firstErrorDate: z.union([z.string().datetime(), z.literal('')]),
-		lastErrorDate: z.union([z.string().datetime(), z.literal('')]),
-		lastError: z.string(),
-		lastExecutionType: z.union([executionType, z.literal('')])
-	}),
-	eventPattern: z.string(),
-	execution: z.object({
-		count: z.number(),
-		failed: z.number(),
-		firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
-		firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
-		lastExecutionDate: z.union([z.string().datetime(), z.literal('')]),
-		lastExecutionType: z.union([executionType, z.literal('')]),
-		lastResponseBody: z.string(),
-		lastResponseHeaders: z.record(z.string()),
-		lastResponseStatus: z.number(),
-		successful: z.number()
-	}),
-	id: z.string(),
-	idPrefix: z.string(),
-	namespace: z.string(),
-	noAfter: z.union([z.string().datetime(), z.literal('')]),
-	noBefore: z.union([z.string().datetime(), z.literal('')]),
-	repeat: z.object({
-		interval: z.number().min(0),
-		max: z.number().min(0).default(0),
-		unit: z.enum(['minutes', 'hours', 'days'])
-	}),
-	request: z.object({
-		body: z.record(z.any()).nullable(),
-		headers: z.record(z.string()).nullable(),
-		method: Webhooks.schema.requestMethod.default('GET'),
-		url: z.string().url()
-	}),
-	rescheduleOnManualExecution: z.boolean().default(true),
-	retryLimit: z.number().min(0).default(3),
-	scheduledDate: z.union([z.string().datetime(), z.literal('-')]),
-	status: taskStatus.default('ACTIVE')
-});
-
-const taskInput = task
-	.extend({
-		noAfter: z.union([
-			z.literal(''),
-			z
-				.string()
-				.datetime({ offset: true })
-				.refine(date => {
-					return new Date(date) > new Date(_.now() - 1000);
-				}, 'noAfter cannot be in the past')
-		]),
-		noBefore: z.union([
-			z.literal(''),
-			z
-				.string()
-				.datetime({ offset: true })
-				.refine(date => {
-					return new Date(date) > new Date(_.now() - 1000);
-				}, 'noBefore cannot be in the past')
-		]),
-		request: task.shape.request.partial({
-			body: true,
-			headers: true,
-			method: true
-		}),
-		scheduledDate: z.union([
-			z.literal(''),
-			z
-				.string()
-				.datetime({ offset: true })
-				.refine(date => {
-					return new Date(date) > new Date(_.now() - 1000);
-				}, 'scheduledDate cannot be in the past')
-		])
-	})
-	.omit({
-		__createdAt: true,
-		__namespace__eventPattern: true,
-		__updatedAt: true,
-		errors: true,
-		execution: true,
-		id: true,
-		status: true
-	})
-	.partial({
-		concurrency: true,
-		eventPattern: true,
-		idPrefix: true,
-		noAfter: true,
-		noBefore: true,
-		repeat: true,
-		rescheduleOnManualExecution: true,
-		scheduledDate: true
-	})
-	.refine(
-		data => {
-			if (data.noAfter && data.noBefore) {
-				return new Date(data.noAfter) > new Date(data.noBefore);
-			}
-
-			return true;
-		},
-		{
-			message: 'noAfter must be after noBefore',
-			path: ['noAfter']
-		}
-	);
-
-const callWebhookInput = z.object({
-	date: z.date(),
-	executionType,
-	tasks: z.array(task)
-});
-
-const deleteInput = z.object({
-	id: z.string(),
-	namespace: z.string()
-});
-
-const fetchInput = z
-	.object({
-		chunkLimit: z.number().min(1).optional(),
-		desc: z.boolean().default(false),
-		eventPattern: z.string().optional(),
-		eventPatternPrefix: z.boolean().default(false),
-		fromScheduledDate: z.string().datetime({ offset: true }).optional(),
-		id: z.string().optional(),
-		idPrefix: z.boolean().default(false),
-		limit: z.number().min(1).default(100),
-		namespace: z.string(),
-		onChunk: z
-			.function()
-			.args(
-				z.object({
-					count: z.number(),
-					items: z.array(task)
-				})
-			)
-			.returns(z.promise(z.void()))
-			.optional(),
-		startKey: z.record(z.any()).nullable().default(null),
-		status: taskStatus.nullable().optional(),
-		toScheduledDate: z.string().datetime({ offset: true }).optional()
-	})
-	.refine(
-		data => {
-			if (_.isNil(data.onChunk)) {
-				return data.limit <= 1000;
-			}
-
-			return true;
-		},
-		{
-			message: 'Number must be less than or equal to 1000',
-			path: ['limit']
-		}
-	);
-
-const fetchLogsInput = Webhooks.schema.fetchLogsInput;
-const getInput = z.object({
-	id: z.string(),
-	namespace: z.string()
-});
-
-const queryActiveTasksInputBase = z.object({
-	date: z.date(),
-	onChunk: z
-		.function()
-		.args(
-			z.object({
-				count: z.number(),
-				items: z.array(task)
-			})
-		)
-		.returns(z.promise(z.void()))
-});
-
-const queryActiveTasksInput = z.union([
-	queryActiveTasksInputBase.extend({
-		eventPattern: z.string(),
-		eventPatternPrefix: z.boolean().default(false),
-		namespace: z.string()
-	}),
-	queryActiveTasksInputBase.extend({
-		id: z.string(),
-		idPrefix: z.boolean().default(false),
-		namespace: z.string()
-	}),
-	queryActiveTasksInputBase
-]);
-
-const setTaskErrorInput = z.object({
-	error: z.instanceof(Error),
-	executionType,
-	pid: z.string(),
-	task
-});
-
-const setTaskLockInput = z.object({
-	date: z.date(),
-	pid: z.string(),
-	task
-});
-
-const setTaskSuccessInput = z.object({
-	executionType,
-	pid: z.string(),
-	response: Webhooks.schema.response,
-	task
-});
-
-const log = Webhooks.schema.log;
-const triggerInput = z.union([
-	z.object({
-		conditionData: z.record(z.any()).optional(),
-		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
-		id: z.string(),
-		idPrefix: z.boolean().default(false),
-		namespace: z.string(),
-		requestBody: z.record(z.any()).optional(),
-		requestHeaders: z.record(z.string()).optional(),
-		requestMethod: Webhooks.schema.requestMethod.optional(),
-		requestUrl: z.string().url().optional()
-	}),
-	z.object({
-		conditionData: z.record(z.any()).optional(),
-		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
-		eventPattern: z.string(),
-		eventPatternPrefix: z.boolean().default(false),
-		namespace: z.string(),
-		requestBody: z.record(z.any()).optional(),
-		requestHeaders: z.record(z.string()).optional(),
-		requestMethod: Webhooks.schema.requestMethod.optional(),
-		requestUrl: z.string().url().optional()
-	})
-]);
-
-const schema = {
-	callWebhookInput,
-	deleteInput,
-	fetchInput,
-	fetchLogsInput,
-	getInput,
-	log,
-	queryActiveTasksInput,
-	setTaskErrorInput,
-	setTaskLockInput,
-	setTaskSuccessInput,
-	task,
-	taskInput,
-	taskStatus,
-	triggerInput
-};
 
 namespace Hooks {
 	export type ConstructorOptions = {
@@ -300,25 +29,29 @@ namespace Hooks {
 		webhookCaller?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
 	};
 
-	export type CallWebhookInput = z.input<typeof callWebhookInput>;
-	export type DeleteInput = z.input<typeof deleteInput>;
-	export type FetchInput = z.input<typeof fetchInput>;
-	export type FetchLogsInput = z.input<typeof fetchLogsInput>;
-	export type GetInput = z.input<typeof getInput>;
-	export type Log = z.infer<typeof log>;
-	export type QueryActiveTasksInput = z.input<typeof queryActiveTasksInput>;
-	export type SetTaskErrorInput = z.input<typeof setTaskErrorInput>;
-	export type SetTaskLockInput = z.input<typeof setTaskLockInput>;
-	export type SetTaskSuccessInput = z.input<typeof setTaskSuccessInput>;
-	export type Task = z.infer<typeof task>;
-	export type TaskInput = z.input<typeof taskInput>;
-	export type TaskStatus = z.infer<typeof taskStatus>;
-	export type TriggerInput = z.input<typeof triggerInput>;
+	export type CallWebhookInput = z.input<typeof schema.callWebhookInput>;
+	export type DeleteInput = z.input<typeof schema.deleteInput>;
+	export type FetchInput = z.input<typeof schema.fetchInput>;
+	export type FetchLogsInput = z.input<typeof schema.fetchLogsInput>;
+	export type GetInput = z.input<typeof schema.getTaskInput>;
+	export type Log = z.infer<typeof schema.log>;
+	export type QueryActiveTasksInput = z.input<typeof schema.queryActiveTasksInput>;
+	export type SetTaskErrorInput = z.input<typeof schema.setTaskErrorInput>;
+	export type SetTaskLockInput = z.input<typeof schema.setTaskLockInput>;
+	export type SetTaskSuccessInput = z.input<typeof schema.setTaskSuccessInput>;
+	export type SubTaskInput = z.input<typeof schema.subTaskInput>;
+	export type Task = z.infer<typeof schema.task>;
+	export type TaskExecutionType = z.infer<typeof schema.taskExecutionType>;
+	export type TaskInput = z.input<typeof schema.taskInput>;
+	export type TaskStatus = z.infer<typeof schema.taskStatus>;
+	export type TaskType = z.infer<typeof schema.taskType>;
+	export type TimeUnit = z.infer<typeof schema.timeUnit>;
+	export type TriggerInput = z.input<typeof schema.triggerInput>;
 	export type TriggerInputConditionFilter = UseFilterCriteria.MatchInput;
 }
 
 const taskShape = (input: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => {
-	return zDefault(task, input);
+	return zDefault(schema.task, input);
 };
 
 class Hooks {
@@ -334,12 +67,12 @@ class Hooks {
 		const tasks = new Dynamodb<Hooks.Task>({
 			accessKeyId: options.accessKeyId,
 			indexes: [
-				// used to fetch tasks by namespace / eventPattern
+				// used to fetch tasks by namespace / manualEventPattern
 				{
-					name: 'namespace-event-pattern',
+					name: 'namespace-manual-event-pattern',
 					partition: 'namespace',
 					partitionType: 'S',
-					sort: 'eventPattern',
+					sort: 'manualEventPattern',
 					sortType: 'S'
 				},
 				// used to fetch tasks by namespace / scheduledDate
@@ -350,12 +83,12 @@ class Hooks {
 					sort: 'scheduledDate',
 					sortType: 'S'
 				},
-				// used to trigger tasks by status / namespace#eventPattern
+				// used to trigger tasks by status / namespace#manualEventPattern
 				{
-					name: 'status-namespace-event-pattern',
+					name: 'status-namespace-manual-event-pattern',
 					partition: 'status',
 					partitionType: 'S',
-					sort: '__namespace__eventPattern',
+					sort: '__namespace__manualEventPattern',
 					sortType: 'S'
 				},
 				// used to trigger tasks by status / scheduledDate
@@ -398,29 +131,29 @@ class Hooks {
 		this.webhooks = webhooks;
 	}
 
-	private calculateNextSchedule(currentTime: string, rule: Hooks.Task['repeat']): string {
+	private calculateNextSchedule(currentTime: string, rule: { unit: Hooks.TimeUnit; value: number }): string {
 		let current = new Date(currentTime);
-		let intervalMs: number;
+		let ms: number;
 
 		switch (rule.unit) {
 			case 'minutes':
-				intervalMs = rule.interval * MINUTE_IN_MS;
+				ms = rule.value * MINUTE_IN_MS;
 				break;
 			case 'hours':
-				intervalMs = rule.interval * HOUR_IN_MS;
+				ms = rule.value * HOUR_IN_MS;
 				break;
 			case 'days':
-				intervalMs = rule.interval * DAY_IN_MS;
+				ms = rule.value * DAY_IN_MS;
 				break;
 		}
 
-		const next = new Date(current.getTime() + intervalMs);
+		const next = new Date(current.getTime() + ms);
 
 		return next.toISOString();
 	}
 
 	async callWebhook(input: Hooks.CallWebhookInput): Promise<Hooks.Task[]> {
-		let args = await callWebhookInput.parseAsync(input);
+		let args = await schema.callWebhookInput.parseAsync(input);
 		let promiseTasks: (() => Promise<Hooks.Task | null>)[] = [];
 
 		for (const item of args.tasks) {
@@ -429,6 +162,61 @@ class Hooks {
 
 			const promiseTask = async () => {
 				try {
+					// handle delay
+					if (args.executionType === 'MANUAL' && task.manualDelayValue > 0) {
+						return await this.registerSubTask({
+							delayDebounce: task.manualDelayDebounce,
+							delayUnit: task.manualDelayUnit,
+							delayValue: task.manualDelayValue,
+							id: task.id,
+							namespace: task.namespace,
+							requestBody: task.requestBody,
+							requestHeaders: task.requestHeaders,
+							requestMethod: task.requestMethod,
+							requestUrl: task.requestUrl
+						});
+					}
+
+					// handle subTasks
+					let subTaskRequest: null | {
+						requestBody: Hooks.Task['requestBody'];
+						requestHeaders: Hooks.Task['requestHeaders'];
+						requestMethod: Hooks.Task['requestMethod'];
+						requestUrl: Hooks.Task['requestUrl'];
+						type: Hooks.Task['type'];
+					} = null;
+
+					if (task.parentId && task.parentNamespace) {
+						// delete subTask
+						await this.db.tasks.delete({
+							filter: {
+								item: {
+									namespace: task.namespace,
+									id: task.id
+								}
+							}
+						});
+
+						const parentTask = await this.getTask({
+							id: task.parentId,
+							namespace: task.parentNamespace
+						});
+
+						if (!parentTask) {
+							return null;
+						}
+
+						subTaskRequest = {
+							requestBody: task.requestBody,
+							requestHeaders: task.requestHeaders,
+							requestMethod: task.requestMethod,
+							requestUrl: task.requestUrl,
+							type: task.type
+						};
+
+						task = parentTask;
+					}
+
 					// concurrency is disabled by default (exclusive execution)
 					if (!task.concurrency) {
 						// update task status to processing and set pid disallowing concurrency
@@ -439,20 +227,20 @@ class Hooks {
 						});
 					}
 
-					const { response } = await this.webhooks.trigger({
-						idPrefix: _.compact([args.executionType, task.idPrefix]).join('#'),
+					const log = await this.webhooks.trigger({
+						idPrefix: _.compact([task.idPrefix, args.executionType, subTaskRequest?.type]).join('#'),
 						namespace: task.namespace,
-						requestBody: task.request.body,
-						requestHeaders: task.request.headers,
-						requestMethod: task.request.method,
-						requestUrl: task.request.url,
+						requestBody: subTaskRequest?.requestBody || task.requestBody,
+						requestHeaders: subTaskRequest?.requestHeaders || task.requestHeaders,
+						requestMethod: subTaskRequest?.requestMethod || task.requestMethod,
+						requestUrl: subTaskRequest?.requestUrl || task.requestUrl,
 						retryLimit: task.retryLimit
 					});
 
 					task = await this.setTaskSuccess({
 						executionType: args.executionType,
+						log,
 						pid,
-						response,
 						task
 					});
 				} catch (err) {
@@ -481,12 +269,12 @@ class Hooks {
 		return _.compact(_.map(res, 'value'));
 	}
 
-	async clear(namespace: string): Promise<{ count: number }> {
+	async clearTasks(namespace: string): Promise<{ count: number }> {
 		return this.db.tasks.clear(namespace);
 	}
 
-	async delete(input: Hooks.DeleteInput): Promise<Hooks.Task | null> {
-		const args = await deleteInput.parseAsync(input);
+	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task | null> {
+		const args = await schema.deleteInput.parseAsync(input);
 		const res = await this.db.tasks.delete({
 			filter: {
 				item: {
@@ -502,7 +290,7 @@ class Hooks {
 	async deleteMany(
 		args: Omit<Hooks.FetchInput, 'limit' | 'onChunk' | 'startKey'>
 	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
-		args = await fetchInput.parseAsync(args);
+		args = await schema.fetchInput.parseAsync(args);
 
 		let deleted: { id: string; namespace: string }[] = [];
 
@@ -525,7 +313,16 @@ class Hooks {
 	}
 
 	async fetch(input: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
-		const args = await fetchInput.parseAsync(input);
+		const args = await schema.fetchInput.parseAsync(input);
+
+		if (args.type === 'DEBOUNCED') {
+			args.namespace = `${args.namespace}#DEBOUNCED`;
+		}
+
+		if (args.type === 'DELAYED') {
+			args.namespace = `${args.namespace}#DELAYED`;
+		}
+
 		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
 			attributeNames: { '#namespace': 'namespace' },
 			attributeValues: { ':namespace': args.namespace },
@@ -537,7 +334,7 @@ class Hooks {
 		};
 
 		const filters = {
-			eventPattern: '',
+			manualEventPattern: '',
 			scheduledDate: '',
 			status: ''
 		};
@@ -562,18 +359,20 @@ class Hooks {
 		}
 
 		// FILTER BY EVENT_PATTERN
-		if (args.eventPattern) {
+		if (args.manualEventPattern) {
 			queryOptions.attributeNames = {
 				...queryOptions.attributeNames,
-				'#eventPattern': 'eventPattern'
+				'#manualEventPattern': 'manualEventPattern'
 			};
 
 			queryOptions.attributeValues = {
 				...queryOptions.attributeValues,
-				':eventPattern': args.eventPattern
+				':manualEventPattern': args.manualEventPattern
 			};
 
-			filters.eventPattern = args.eventPatternPrefix ? 'begins_with(#eventPattern, :eventPattern)' : '#eventPattern = :eventPattern';
+			filters.manualEventPattern = args.manualEventPatternPrefix
+				? 'begins_with(#manualEventPattern, :manualEventPattern)'
+				: '#manualEventPattern = :manualEventPattern';
 		}
 
 		// FILTER BY SCHEDULED_DATE
@@ -628,43 +427,45 @@ class Hooks {
 		}
 
 		// QUERY BY EVENT_PATTERN INDEX
-		if (args.eventPattern && !args.status) {
-			// omit [eventPattern] filter
-			filters.eventPattern = '';
+		if (args.manualEventPattern && !args.status) {
+			// omit [manualEventPattern] filter
+			filters.manualEventPattern = '';
 
-			queryOptions.index = 'namespace-event-pattern';
+			queryOptions.index = 'namespace-manual-event-pattern';
 			queryOptions.queryExpression = [
 				'#namespace = :namespace',
-				args.eventPatternPrefix ? 'begins_with(#eventPattern, :eventPattern)' : '#eventPattern = :eventPattern'
+				args.manualEventPatternPrefix
+					? 'begins_with(#manualEventPattern, :manualEventPattern)'
+					: '#manualEventPattern = :manualEventPattern'
 			].join(' AND ');
 
 			return query(queryOptions);
 		}
 
 		// QUERY BY STATUS -> EVENT_PATTERN INDEX
-		if (args.eventPattern && args.status) {
-			// omit [eventPattern, status] filters
-			filters.eventPattern = '';
+		if (args.manualEventPattern && args.status) {
+			// omit [manualEventPattern, status] filters
+			filters.manualEventPattern = '';
 			filters.status = '';
-			queryOptions.attributeNames = _.omit(queryOptions.attributeNames, ['#eventPattern', '#namespace']);
-			queryOptions.attributeValues = _.omit(queryOptions.attributeValues, [':eventPattern', ':namespace']);
+			queryOptions.attributeNames = _.omit(queryOptions.attributeNames, ['#manualEventPattern', '#namespace']);
+			queryOptions.attributeValues = _.omit(queryOptions.attributeValues, [':manualEventPattern', ':namespace']);
 
-			queryOptions.index = 'status-namespace-event-pattern';
+			queryOptions.index = 'status-namespace-manual-event-pattern';
 			queryOptions.attributeNames = {
 				...queryOptions.attributeNames,
-				'#namespace__eventPattern': '__namespace__eventPattern'
+				'#namespace__manualEventPattern': '__namespace__manualEventPattern'
 			};
 
 			queryOptions.attributeValues = {
 				...queryOptions.attributeValues,
-				':namespace__eventPattern': `${args.namespace}#${args.eventPattern}`
+				':namespace__manualEventPattern': `${args.namespace}#${args.manualEventPattern}`
 			};
 
 			queryOptions.queryExpression = [
 				'#status = :status',
-				args.eventPatternPrefix
-					? 'begins_with(#namespace__eventPattern, :namespace__eventPattern)'
-					: '#namespace__eventPattern = :namespace__eventPattern'
+				args.manualEventPatternPrefix
+					? 'begins_with(#namespace__manualEventPattern, :namespace__manualEventPattern)'
+					: '#namespace__manualEventPattern = :namespace__manualEventPattern'
 			].join(' AND ');
 
 			return query(queryOptions);
@@ -690,20 +491,35 @@ class Hooks {
 		return this.webhooks.fetchLogs(input);
 	}
 
-	async get(input: Hooks.GetInput): Promise<Hooks.Task | null> {
-		const args = await getInput.parseAsync(input);
-		const res = await this.db.tasks.get({
-			item: {
-				namespace: args.namespace,
-				id: args.id
+	async getTask(input: Hooks.GetInput): Promise<Hooks.Task | null> {
+		const args = await schema.getTaskInput.parseAsync(input);
+
+		let [id, namespace] = [args.id, args.namespace];
+		let prefix = false;
+		
+		if (args.type === 'DEBOUNCED') {
+			namespace = `${args.namespace}#DEBOUNCED`;
+
+			if (args.delayDebounceId) {
+				id = _.compact([args.id, args.delayDebounceId]).join('#');
 			}
+		}
+
+		if (args.type === 'DELAYED') {
+			namespace = `${args.namespace}#DELAYED`;
+			prefix = true;
+		}
+
+		const res = await this.db.tasks.get({
+			item: { namespace, id },
+			prefix
 		});
 
 		return res ? taskShape(res) : null;
 	}
 
-	private async queryActiveTasks(args: Hooks.QueryActiveTasksInput) {
-		args = await queryActiveTasksInput.parseAsync(args);
+	private async queryActiveTasks(args: Hooks.QueryActiveTasksInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
+		args = await schema.queryActiveTasksInput.parseAsync(args);
 
 		const query = async (options: Dynamodb.QueryOptions<Hooks.Task>) => {
 			const res = await this.db.tasks.query(options);
@@ -716,14 +532,12 @@ class Hooks {
 
 		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
 			attributeNames: {
-				'#count': 'count',
-				'#execution': 'execution',
-				'#max': 'max',
 				'#noAfter': 'noAfter',
 				'#noBefore': 'noBefore',
 				'#pid': 'pid',
-				'#repeat': 'repeat',
-				'#status': 'status'
+				'#repeatMax': 'repeatMax',
+				'#status': 'status',
+				'#totalExecutions': 'totalExecutions'
 			},
 			attributeValues: {
 				':active': 'ACTIVE',
@@ -734,7 +548,7 @@ class Hooks {
 			chunkLimit: 100,
 			filterExpression: [
 				'attribute_not_exists(#pid)',
-				'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+				'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
 				'(#noBefore = :empty OR :now > #noBefore)',
 				'(#noAfter = :empty OR :now < #noAfter)'
 			].join(' AND '),
@@ -742,23 +556,23 @@ class Hooks {
 			onChunk: args.onChunk
 		};
 
-		if ('eventPattern' in args && args.eventPattern) {
-			queryOptions.index = 'status-namespace-event-pattern';
+		if ('manualEventPattern' in args && args.manualEventPattern) {
+			queryOptions.index = 'status-namespace-manual-event-pattern';
 			queryOptions.attributeNames = {
 				...queryOptions.attributeNames,
-				'#namespace__eventPattern': '__namespace__eventPattern'
+				'#namespace__manualEventPattern': '__namespace__manualEventPattern'
 			};
 
 			queryOptions.attributeValues = {
 				...queryOptions.attributeValues,
-				':namespace__eventPattern': `${args.namespace}#${args.eventPattern}`
+				':namespace__manualEventPattern': `${args.namespace}#${args.manualEventPattern}`
 			};
 
 			queryOptions.queryExpression = [
 				'#status = :active',
-				args.eventPatternPrefix
-					? 'begins_with(#namespace__eventPattern, :namespace__eventPattern)'
-					: '#namespace__eventPattern = :namespace__eventPattern'
+				args.manualEventPatternPrefix
+					? 'begins_with(#namespace__manualEventPattern, :namespace__manualEventPattern)'
+					: '#namespace__manualEventPattern = :namespace__manualEventPattern'
 			].join(' AND ');
 
 			return query(queryOptions);
@@ -800,34 +614,69 @@ class Hooks {
 		return query(queryOptions);
 	}
 
+	private async registerSubTask(input: Hooks.SubTaskInput): Promise<Hooks.Task> {
+		const args = await schema.subTaskInput.parseAsync(input);
+
+		let [id, namespace] = [args.id, args.namespace];
+		let type: 'DELAYED' | 'DEBOUNCED' = 'DELAYED';
+
+		if (args.delayDebounce) {
+			id = _.compact([args.id, args.delayDebounceId]).join('#');
+			namespace = `${args.namespace}#DEBOUNCED`;
+			type = 'DEBOUNCED';
+		} else {
+			id = [args.id, _.now()].join('#');
+			namespace = `${args.namespace}#DELAYED`;
+			type = 'DELAYED';
+		}
+
+		const scheduledDate = this.calculateNextSchedule(new Date().toISOString(), {
+			unit: args.delayUnit,
+			value: args.delayValue
+		});
+
+		const res = await this.db.tasks.put(
+			taskShape({
+				...args,
+				__namespace__manualEventPattern: '-',
+				firstScheduledDate: scheduledDate,
+				parentId: args.id,
+				parentNamespace: args.namespace,
+				id,
+				manualEventPattern: '-',
+				namespace,
+				scheduledDate,
+				type
+			}),
+			{ overwrite: true }
+		);
+
+		return _.omit(res, ['__ts']);
+	}
+
 	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
-		const args = await taskInput.parseAsync(input);
+		const args = await schema.taskInput.parseAsync(input);
 		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : '-';
 		const res = await this.db.tasks.put(
 			taskShape({
 				...args,
-				__namespace__eventPattern: args.eventPattern ? `${args.namespace}#${args.eventPattern}` : '-',
-				errors: {
-					count: 0,
-					firstErrorDate: '',
-					lastError: '',
-					lastErrorDate: '',
-					lastExecutionType: ''
-				},
-				eventPattern: args.eventPattern || '-',
-				execution: {
-					count: 0,
-					failed: 0,
-					firstExecutionDate: '',
-					firstScheduledDate: scheduledDate,
-					lastExecutionDate: '',
-					lastExecutionType: '',
-					lastResponseBody: '',
-					lastResponseHeaders: {},
-					lastResponseStatus: 0,
-					successful: 0
-				},
+				__namespace__manualEventPattern: args.manualEventPattern ? `${args.namespace}#${args.manualEventPattern}` : '-',
+				firstErrorDate: '',
+				firstExecutionDate: '',
+				firstScheduledDate: scheduledDate,
 				id: this.uuid(args.idPrefix),
+				lastError: '',
+				lastErrorDate: '',
+				lastExecutionDate: '',
+				lastExecutionType: '',
+				lastResponseBody: '',
+				lastResponseHeaders: {},
+				lastResponseStatus: 0,
+				manualEventPattern: args.manualEventPattern || '-',
+				totalErrors: 0,
+				totalExecutions: 0,
+				totalFailedExecutions: 0,
+				totalSuccessfulExecutions: 0,
 				noAfter: args.noAfter ? new Date(args.noAfter).toISOString() : '',
 				noBefore: args.noBefore ? new Date(args.noBefore).toISOString() : '',
 				scheduledDate
@@ -837,18 +686,17 @@ class Hooks {
 		return _.omit(res, ['__ts']);
 	}
 
-	private async setTaskError(input: Hooks.SetTaskErrorInput) {
-		const args = await setTaskErrorInput.parseAsync(input);
+	private async setTaskError(input: Hooks.SetTaskErrorInput): Promise<Hooks.Task> {
+		const args = await schema.setTaskErrorInput.parseAsync(input);
 		const date = new Date();
 		const httpError = HttpError.wrap(args.error);
 		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 			attributeNames: {
-				'#count': 'count',
-				'#errors': 'errors',
 				'#lastError': 'lastError',
 				'#lastErrorDate': 'lastErrorDate',
-				'#lastExecutionType': 'lastExecutionType',
-				'#pid': 'pid'
+				'#lastErrorExecutionType': 'lastErrorExecutionType',
+				'#pid': 'pid',
+				'#totalErrors': 'totalErrors'
 			},
 			attributeValues: {
 				':error': httpError.message,
@@ -882,22 +730,22 @@ class Hooks {
 		}
 
 		updateOptions.updateExpression = [
-			`ADD ${['#errors.#count :one'].join(', ')}`,
-			`SET ${['#errors.#lastExecutionType = :executionType', '#errors.#lastError = :error', '#errors.#lastErrorDate = :now'].join(', ')}`,
+			`ADD ${['#totalErrors :one'].join(', ')}`,
+			`SET ${['#lastErrorExecutionType = :executionType', '#lastError = :error', '#lastErrorDate = :now'].join(', ')}`,
 			`REMOVE #pid`
 		].join(' ');
 
-		if (args.task.errors.firstErrorDate === '') {
+		if (args.task.firstErrorDate === '') {
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#firstErrorDate': 'firstErrorDate'
 			};
 
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #errors.#firstErrorDate = :now');
+			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #firstErrorDate = :now');
 		}
 
 		// set MAX_ERRORS_REACHED status if max errors reached
-		const nextErrorsCount = args.task.errors.count + 1;
+		const nextErrorsCount = args.task.totalErrors + 1;
 
 		if (this.maxErrors > 0 && nextErrorsCount >= this.maxErrors) {
 			updateOptions.attributeNames = {
@@ -930,19 +778,17 @@ class Hooks {
 	}
 
 	private async setTaskLock(input: Hooks.SetTaskLockInput) {
-		const args = await setTaskLockInput.parseAsync(input);
+		const args = await schema.setTaskLockInput.parseAsync(input);
 
 		return taskShape(
 			await this.db.tasks.update({
 				attributeNames: {
-					'#count': 'count',
-					'#execution': 'execution',
-					'#max': 'max',
 					'#noAfter': 'noAfter',
 					'#noBefore': 'noBefore',
 					'#pid': 'pid',
-					'#repeat': 'repeat',
-					'#status': 'status'
+					'#repeatMax': 'repeatMax',
+					'#status': 'status',
+					'#totalExecutions': 'totalExecutions'
 				},
 				attributeValues: {
 					':active': 'ACTIVE',
@@ -956,7 +802,7 @@ class Hooks {
 				conditionExpression: [
 					'attribute_not_exists(#pid)',
 					'#status = :active',
-					'(#repeat.#max = :zero OR #execution.#count < #repeat.#max)',
+					'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
 					'(#noBefore = :empty OR :now > #noBefore)',
 					'(#noAfter = :empty OR :now < #noAfter)'
 				].join(' AND '),
@@ -972,27 +818,26 @@ class Hooks {
 	}
 
 	private async setTaskSuccess(input: Hooks.SetTaskSuccessInput) {
-		const args = await setTaskSuccessInput.parseAsync(input);
+		const args = await schema.setTaskSuccessInput.parseAsync(input);
 		const date = new Date();
 		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 			attributeNames: {
-				'#count': 'count',
-				'#execution': 'execution',
 				'#lastExecutionDate': 'lastExecutionDate',
 				'#lastExecutionType': 'lastExecutionType',
 				'#lastResponseBody': 'lastResponseBody',
 				'#lastResponseHeaders': 'lastResponseHeaders',
 				'#lastResponseStatus': 'lastResponseStatus',
 				'#pid': 'pid',
-				'#successfulOrFailed': args.response.ok ? 'successful' : 'failed'
+				'#totalExecutions': 'totalExecutions',
+				'#totalSuccessfulOrFailed': args.log.responseOk ? 'totalSuccessfulExecutions' : 'totalFailedExecutions'
 			},
 			attributeValues: {
 				':executionType': args.executionType,
 				':now': date.toISOString(),
 				':one': 1,
-				':responseBody': args.response.body,
-				':responseHeaders': args.response.headers,
-				':responseStatus': args.response.status
+				':responseBody': args.log.responseBody,
+				':responseHeaders': args.log.responseHeaders,
+				':responseStatus': args.log.responseStatus
 			},
 			filter: {
 				item: {
@@ -1003,13 +848,13 @@ class Hooks {
 		};
 
 		updateOptions.updateExpression = [
-			`ADD ${['#execution.#count :one', '#execution.#successfulOrFailed :one'].join(', ')}`,
+			`ADD ${['#totalExecutions :one', '#totalSuccessfulOrFailed :one'].join(', ')}`,
 			`SET ${[
-				'#execution.#lastExecutionDate = :now',
-				'#execution.#lastExecutionType = :executionType',
-				'#execution.#lastResponseBody = :responseBody',
-				'#execution.#lastResponseHeaders = :responseHeaders',
-				'#execution.#lastResponseStatus = :responseStatus'
+				'#lastExecutionDate = :now',
+				'#lastExecutionType = :executionType',
+				'#lastResponseBody = :responseBody',
+				'#lastResponseHeaders = :responseHeaders',
+				'#lastResponseStatus = :responseStatus'
 			].join(', ')}`,
 			`REMOVE #pid`
 		].join(' ');
@@ -1031,25 +876,22 @@ class Hooks {
 			updateOptions.conditionExpression = '#status = :processing AND #pid = :pid';
 		}
 
-		if (args.task.execution.firstExecutionDate === '') {
+		if (args.task.firstExecutionDate === '') {
 			updateOptions.attributeNames = {
 				...updateOptions.attributeNames,
 				'#firstExecutionDate': 'firstExecutionDate'
 			};
 
-			updateOptions.updateExpression = concatUpdateExpression(
-				updateOptions.updateExpression || '',
-				'SET #execution.#firstExecutionDate = :now'
-			);
+			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #firstExecutionDate = :now');
 		}
 
-		const nextExecutionCount = args.task.execution.count + 1;
-		const repeat = args.task.repeat.max === 0 || nextExecutionCount < args.task.repeat.max;
+		const nextExecutionCount = args.task.totalExecutions + 1;
+		const repeat = args.task.repeatMax === 0 || nextExecutionCount < args.task.repeatMax;
 
 		if (
-			(args.executionType === 'SCHEDULED' || (args.executionType === 'MANUAL' && args.task.rescheduleOnManualExecution)) &&
+			(args.executionType === 'SCHEDULED' || (args.executionType === 'MANUAL' && args.task.manualReschedule)) &&
 			repeat &&
-			args.task.repeat.interval > 0 &&
+			args.task.repeatInterval > 0 &&
 			args.task.scheduledDate
 		) {
 			// keep ACTIVE status and reschedule if can repeat and have scheduled date
@@ -1061,7 +903,10 @@ class Hooks {
 
 			updateOptions.attributeValues = {
 				...updateOptions.attributeValues,
-				':scheduledDate': this.calculateNextSchedule(args.task.scheduledDate, args.task.repeat),
+				':scheduledDate': this.calculateNextSchedule(args.task.scheduledDate, {
+					unit: args.task.repeatUnit,
+					value: args.task.repeatInterval
+				}),
 				':active': 'ACTIVE'
 			};
 
@@ -1101,7 +946,7 @@ class Hooks {
 	}
 
 	async suspendTask(input: Hooks.GetInput): Promise<Hooks.Task | null> {
-		const task = await this.get(input);
+		const task = await this.getTask(input);
 
 		if (!task) {
 			return null;
@@ -1189,18 +1034,20 @@ class Hooks {
 
 			let request: {
 				body: Record<string, any>;
+				delayDebounceId: string;
 				headers: Record<string, any>;
-				method: Webhooks.RequestMethod | '';
+				method: Webhooks.Request['method'] | '';
 				url: string;
 			} = {
 				body: {},
+				delayDebounceId: '',
 				headers: {},
 				method: '',
 				url: ''
 			};
 
 			if (input) {
-				const args = await triggerInput.parseAsync(input);
+				const args = await schema.triggerInput.parseAsync(input);
 
 				if (args.conditionData && args.conditionFilter) {
 					if (!(await UseFilterCriteria.match(args.conditionData, args.conditionFilter))) {
@@ -1215,11 +1062,11 @@ class Hooks {
 					url: args.requestUrl || ''
 				};
 
-				if ('eventPattern' in args && args.eventPattern) {
+				if ('manualEventPattern' in args && args.manualEventPattern) {
 					queryActiveTasksOptions = {
 						...queryActiveTasksOptions,
-						eventPattern: args.eventPattern,
-						eventPatternPrefix: args.eventPatternPrefix,
+						manualEventPattern: args.manualEventPattern,
+						manualEventPatternPrefix: args.manualEventPatternPrefix,
 						namespace: args.namespace
 					};
 				} else if ('id' in args && args.id) {
@@ -1232,7 +1079,7 @@ class Hooks {
 				}
 			}
 
-			const executionType = _.some(['eventPattern', 'id'], key => {
+			const executionType = _.some(['manualEventPattern', 'id'], key => {
 				return key in queryActiveTasksOptions;
 			})
 				? 'MANUAL'
@@ -1245,25 +1092,23 @@ class Hooks {
 						items = _.map(items, item => {
 							return {
 								...item,
-								request: {
-									...item.request,
-									body: {
-										...item.request.body,
-										...request.body
-									},
-									headers: {
-										...item.request.headers,
-										...request.headers
-									},
-									method: request.method || item.request.method,
-									url: request.url || item.request.url
-								}
+								requestBody: {
+									...item.requestBody,
+									...request.body
+								},
+								requestHeaders: {
+									...item.requestHeaders,
+									...request.headers
+								},
+								requestMethod: request.method || item.requestMethod,
+								requestUrl: request.url || item.requestUrl
 							};
 						});
 					}
 
 					if (this.customWebhookCall) {
 						const res = await this.customWebhookCall({
+							delayDebounceId: queryActiveTasksOptions.delayDebounceId,
 							date,
 							executionType,
 							tasks: items
@@ -1272,6 +1117,7 @@ class Hooks {
 						result.processed += _.size(res);
 					} else {
 						const res = await this.callWebhook({
+							delayDebounceId: queryActiveTasksOptions.delayDebounceId,
 							date,
 							executionType,
 							tasks: items
@@ -1292,7 +1138,7 @@ class Hooks {
 	}
 
 	async unsuspendTask(input: Hooks.GetInput): Promise<Hooks.Task | null> {
-		const task = await this.get(input);
+		const task = await this.getTask(input);
 
 		if (!task) {
 			return null;
