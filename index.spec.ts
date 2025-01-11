@@ -27,6 +27,8 @@ const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.Task>
 		namespace: 'spec',
 		repeatInterval: 30,
 		repeatUnit: 'minutes',
+		requestBody: { a: 1 },
+		requestHeaders: { a: '1' },
 		requestMethod: 'POST',
 		requestUrl: 'https://httpbin.org/anything',
 		scheduledDate: new Date(_.now() + scheduleDelay).toISOString(),
@@ -34,12 +36,11 @@ const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.Task>
 	});
 };
 
-const createTestSubTaskInput = (options?: Partial<Hooks.SubTaskInput>): Hooks.SubTaskInput => {
+const createTestSubTaskInput = (options: Pick<Hooks.SubTaskInput, 'id'> & Partial<Hooks.SubTaskInput>): Hooks.SubTaskInput => {
 	return {
 		delayDebounce: false,
 		delayUnit: 'minutes',
 		delayValue: 1,
-		id: 'test',
 		namespace: 'spec',
 		requestBody: { subTask: 1 },
 		requestHeaders: { subTask: '1' },
@@ -77,8 +78,8 @@ describe('/index.ts', () => {
 	afterAll(async () => {
 		await Promise.all([
 			hooks.clearTasks('spec'),
-			hooks.clearTasks('spec#DELAYED'),
-			hooks.clearTasks('spec#DEBOUNCED'),
+			hooks.clearTasks('spec#DELAY'),
+			hooks.clearTasks('spec#DELAY-DEBOUNCE'),
 			hooks.webhooks.clearLogs('spec')
 		]);
 	});
@@ -137,8 +138,8 @@ describe('/index.ts', () => {
 		let task: Hooks.Task;
 
 		beforeEach(async () => {
-			vi.spyOn(hooks.db.tasks, 'delete');
-			vi.spyOn(hooks, 'getTask');
+			// @ts-expect-error
+			vi.spyOn(hooks, 'getParentTaskAndCheckConsistency');
 			// @ts-expect-error
 			vi.spyOn(hooks, 'registerSubTask');
 			// @ts-expect-error
@@ -149,21 +150,14 @@ describe('/index.ts', () => {
 			vi.spyOn(hooks, 'setTaskError');
 			vi.spyOn(hooks.webhooks, 'trigger');
 
-			task = await hooks.registerTask(
-				createTestTask(0, {
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
-				})
-			);
+			task = await hooks.registerTask(createTestTask(0));
 		});
 
 		afterEach(async () => {
 			await Promise.all([
 				hooks.clearTasks('spec'),
-				hooks.clearTasks('spec#DELAYED'),
-				hooks.clearTasks('spec#DEBOUNCED'),
+				hooks.clearTasks('spec#DELAY'),
+				hooks.clearTasks('spec#DELAY-DEBOUNCE'),
 				hooks.webhooks.clearLogs('spec')
 			]);
 		});
@@ -177,8 +171,8 @@ describe('/index.ts', () => {
 
 			// @ts-expect-error
 			expect(hooks.registerSubTask).not.toHaveBeenCalled();
-			expect(hooks.getTask).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 			// @ts-expect-error
 			expect(hooks.setTaskLock).toHaveBeenCalledWith({
@@ -188,7 +182,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: 'MANUAL',
+				idPrefix: 'MANUAL#REGULAR',
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -209,6 +203,7 @@ describe('/index.ts', () => {
 				pid: expect.any(String),
 				task: {
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					status: 'PROCESSING'
 				}
@@ -217,6 +212,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual([
 				{
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					firstExecutionDate: expect.any(String),
 					lastExecutionDate: expect.any(String),
@@ -249,8 +245,8 @@ describe('/index.ts', () => {
 
 			// @ts-expect-error
 			expect(hooks.registerSubTask).not.toHaveBeenCalled();
-			expect(hooks.getTask).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 			// @ts-expect-error
 			expect(hooks.setTaskLock).toHaveBeenCalledWith({
@@ -260,7 +256,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: 'test#MANUAL',
+				idPrefix: 'test#MANUAL#REGULAR',
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -281,6 +277,7 @@ describe('/index.ts', () => {
 				pid: expect.any(String),
 				task: {
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					status: 'PROCESSING'
 				}
@@ -289,6 +286,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual([
 				{
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					firstExecutionDate: expect.any(String),
 					lastExecutionDate: expect.any(String),
@@ -323,13 +321,13 @@ describe('/index.ts', () => {
 
 			// @ts-expect-error
 			expect(hooks.registerSubTask).not.toHaveBeenCalled();
-			expect(hooks.getTask).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 			// @ts-expect-error
 			expect(hooks.setTaskLock).not.toHaveBeenCalled();
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: 'MANUAL',
+				idPrefix: 'MANUAL#REGULAR',
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -354,6 +352,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual([
 				{
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					firstExecutionDate: expect.any(String),
 					lastExecutionDate: expect.any(String),
@@ -394,8 +393,8 @@ describe('/index.ts', () => {
 
 			// @ts-expect-error
 			expect(hooks.registerSubTask).not.toHaveBeenCalled();
-			expect(hooks.getTask).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 			// @ts-expect-error
 			expect(hooks.setTaskLock).toHaveBeenCalledWith({
@@ -424,8 +423,8 @@ describe('/index.ts', () => {
 
 			// @ts-expect-error
 			expect(hooks.registerSubTask).not.toHaveBeenCalled();
-			expect(hooks.getTask).not.toHaveBeenCalled();
-			expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 			// @ts-expect-error
 			expect(hooks.setTaskLock).toHaveBeenCalledWith({
@@ -434,7 +433,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: 'MANUAL',
+				idPrefix: 'MANUAL#REGULAR',
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -450,6 +449,7 @@ describe('/index.ts', () => {
 				pid: expect.any(String),
 				task: {
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					status: 'PROCESSING'
 				}
@@ -458,6 +458,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual([
 				{
 					...task,
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					firstErrorDate: expect.any(String),
 					lastError: 'test',
@@ -468,16 +469,12 @@ describe('/index.ts', () => {
 			]);
 		});
 
-		describe('with delay', () => {
-			it('should bypass if executionType = SCHEDULED', async () => {
+		describe('register subTasks', () => {
+			it('should not register if executionType = SCHEDULED', async () => {
 				task = await hooks.registerTask(
 					createTestTask(0, {
 						manualDelayUnit: 'minutes',
-						manualDelayValue: 1,
-						requestBody: { a: 1 },
-						requestHeaders: { a: '1' },
-						requestMethod: 'POST',
-						requestUrl: 'https://httpbin.org/anything'
+						manualDelayValue: 1
 					})
 				);
 
@@ -489,8 +486,8 @@ describe('/index.ts', () => {
 
 				// @ts-expect-error
 				expect(hooks.registerSubTask).not.toHaveBeenCalled();
-				expect(hooks.getTask).not.toHaveBeenCalled();
-				expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 				// @ts-expect-error
 				expect(hooks.setTaskLock).toHaveBeenCalledWith({
@@ -500,7 +497,7 @@ describe('/index.ts', () => {
 				});
 
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					idPrefix: 'SCHEDULED',
+					idPrefix: 'SCHEDULED#REGULAR',
 					namespace: 'spec',
 					requestBody: { a: 1 },
 					requestHeaders: { a: '1' },
@@ -521,6 +518,7 @@ describe('/index.ts', () => {
 					pid: expect.any(String),
 					task: {
 						...task,
+						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						status: 'PROCESSING'
 					}
@@ -529,6 +527,7 @@ describe('/index.ts', () => {
 				expect(res).toEqual([
 					{
 						...task,
+						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						firstExecutionDate: expect.any(String),
 						lastExecutionDate: expect.any(String),
@@ -543,7 +542,7 @@ describe('/index.ts', () => {
 				]);
 			});
 
-			it.only('should works with delayed task', async () => {
+			it('should register delayed task', async () => {
 				task = await hooks.registerTask(
 					createTestTask(0, {
 						manualDelayUnit: 'minutes',
@@ -566,7 +565,7 @@ describe('/index.ts', () => {
 					delayDebounce: false,
 					delayDebounceId: '',
 					id: task.id,
-					namespace: task.namespace,
+					namespace: 'spec',
 					requestBody: { subTask: 1 },
 					requestHeaders: { subTask: '1' },
 					requestMethod: 'POST',
@@ -574,8 +573,8 @@ describe('/index.ts', () => {
 					delayUnit: 'minutes',
 					delayValue: 1
 				});
-				expect(hooks.getTask).not.toHaveBeenCalled();
-				expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 				// @ts-expect-error
 				expect(hooks.setTaskLock).not.toHaveBeenCalled();
@@ -585,13 +584,13 @@ describe('/index.ts', () => {
 				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
 
 				expect(res[0].id).toEqual(expect.stringMatching(`${task.id}#[0-9]`));
-				expect(res[0].namespace).toEqual('spec#DELAYED');
+				expect(res[0].namespace).toEqual('spec#DELAY');
 				expect(res[0].parentId).toEqual(task.id);
 				expect(res[0].parentNamespace).toEqual(task.namespace);
-				expect(res[0].type).toEqual('DELAYED');
+				expect(res[0].type).toEqual('DELAY');
 			});
 
-			it.only('should works with debounced task', async () => {
+			it('should register debounced task', async () => {
 				task = await hooks.registerTask(
 					createTestTask(0, {
 						manualDelayDebounce: true,
@@ -615,7 +614,7 @@ describe('/index.ts', () => {
 					delayDebounce: true,
 					delayDebounceId: '',
 					id: task.id,
-					namespace: task.namespace,
+					namespace: 'spec',
 					requestBody: { subTask: 1 },
 					requestHeaders: { subTask: '1' },
 					requestMethod: 'POST',
@@ -623,8 +622,8 @@ describe('/index.ts', () => {
 					delayUnit: 'minutes',
 					delayValue: 1
 				});
-				expect(hooks.getTask).not.toHaveBeenCalled();
-				expect(hooks.db.tasks.delete).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
 
 				// @ts-expect-error
 				expect(hooks.setTaskLock).not.toHaveBeenCalled();
@@ -634,21 +633,72 @@ describe('/index.ts', () => {
 				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
 
 				expect(res[0].id).toEqual(task.id);
-				expect(res[0].namespace).toEqual('spec#DEBOUNCED');
+				expect(res[0].namespace).toEqual('spec#DELAY-DEBOUNCE');
 				expect(res[0].parentId).toEqual(task.id);
 				expect(res[0].parentNamespace).toEqual(task.namespace);
-				expect(res[0].type).toEqual('DEBOUNCED');
+				expect(res[0].type).toEqual('DELAY-DEBOUNCE');
+			});
+
+			it('should register identified debounced task', async () => {
+				task = await hooks.registerTask(
+					createTestTask(0, {
+						manualDelayDebounce: true,
+						manualDelayUnit: 'minutes',
+						manualDelayValue: 1,
+						requestBody: { subTask: 1 },
+						requestHeaders: { subTask: '1' },
+						requestMethod: 'POST',
+						requestUrl: 'https://httpbin.org/subtask'
+					})
+				);
+
+				const res = await hooks.callWebhook({
+					date: new Date(),
+					delayDebounceId: 'debounce-id',
+					executionType: 'MANUAL',
+					tasks: [task]
+				});
+
+				// @ts-expect-error
+				expect(hooks.registerSubTask).toHaveBeenCalledWith({
+					delayDebounce: true,
+					delayDebounceId: 'debounce-id',
+					id: task.id,
+					namespace: task.namespace,
+					requestBody: { subTask: 1 },
+					requestHeaders: { subTask: '1' },
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/subtask',
+					delayUnit: 'minutes',
+					delayValue: 1
+				});
+				// @ts-expect-error
+				expect(hooks.getParentTaskAndCheckConsistency).not.toHaveBeenCalled();
+
+				// @ts-expect-error
+				expect(hooks.setTaskLock).not.toHaveBeenCalled();
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+				expect(res[0].id).toEqual(`${task.id}#debounce-id`);
+				expect(res[0].namespace).toEqual('spec#DELAY-DEBOUNCE');
+				expect(res[0].parentId).toEqual(task.id);
+				expect(res[0].parentNamespace).toEqual(task.namespace);
+				expect(res[0].type).toEqual('DELAY-DEBOUNCE');
 			});
 		});
 
-		describe('with subTasks', () => {
+		describe('execute subTasks', () => {
 			let subTask: Hooks.Task;
 
 			beforeEach(async () => {
 				// @ts-expect-error
 				subTask = await hooks.registerSubTask(
 					createTestSubTaskInput({
-						id: task.id
+						id: task.id,
+						namespace: task.namespace
 					})
 				);
 
@@ -656,36 +706,40 @@ describe('/index.ts', () => {
 				vi.mocked(hooks.registerSubTask).mockClear();
 			});
 
-			it('should works', async () => {
-				task = taskShape(
-					await hooks.db.tasks.update({
-						attributeNames: { '#idPrefix': 'idPrefix' },
-						attributeValues: { ':idPrefix': 'test' },
-						filter: { item: { namespace: 'spec', id: task.id } },
-						updateExpression: 'SET #idPrefix = :idPrefix'
-					})
-				);
+			it('should not execute if no subTask', async () => {
+				// @ts-expect-error
+				vi.mocked(hooks.getParentTaskAndCheckConsistency).mockResolvedValueOnce(null);
 
 				const res = await hooks.callWebhook({
 					date: new Date(),
-					executionType: 'MANUAL',
+					executionType: 'SCHEDULED',
 					tasks: [subTask]
 				});
 
 				// @ts-expect-error
 				expect(hooks.registerSubTask).not.toHaveBeenCalled();
-				expect(hooks.getTask).toHaveBeenCalledWith({
-					id: task.id,
-					namespace: task.namespace
+				// @ts-expect-error
+				expect(hooks.getParentTaskAndCheckConsistency).toHaveBeenCalledWith(subTask);
+				// @ts-expect-error
+				expect(hooks.setTaskLock).not.toHaveBeenCalled();
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+				expect(res).toEqual([]);
+			});
+
+			it('should execute', async () => {
+				const res = await hooks.callWebhook({
+					date: new Date(),
+					executionType: 'SCHEDULED',
+					tasks: [subTask]
 				});
-				expect(hooks.db.tasks.delete).toHaveBeenCalledWith({
-					filter: {
-						item: {
-							namespace: subTask.namespace,
-							id: subTask.id
-						}
-					}
-				});
+
+				// @ts-expect-error
+				expect(hooks.registerSubTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getParentTaskAndCheckConsistency).toHaveBeenCalledWith(subTask);
 
 				// @ts-expect-error
 				expect(hooks.setTaskLock).toHaveBeenCalledWith({
@@ -695,7 +749,7 @@ describe('/index.ts', () => {
 				});
 
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					idPrefix: 'test#MANUAL#DELAYED',
+					idPrefix: 'SCHEDULED#DELAY',
 					namespace: 'spec',
 					requestBody: subTask.requestBody,
 					requestHeaders: subTask.requestHeaders,
@@ -706,7 +760,7 @@ describe('/index.ts', () => {
 
 				// @ts-expect-error
 				expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
-					executionType: 'MANUAL',
+					executionType: 'SCHEDULED',
 					log: expect.objectContaining({
 						requestBody: subTask.requestBody,
 						requestHeaders: subTask.requestHeaders,
@@ -716,6 +770,7 @@ describe('/index.ts', () => {
 					pid: expect.any(String),
 					task: {
 						...task,
+						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						status: 'PROCESSING'
 					}
@@ -724,10 +779,11 @@ describe('/index.ts', () => {
 				expect(res).toEqual([
 					{
 						...task,
+						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						firstExecutionDate: expect.any(String),
 						lastExecutionDate: expect.any(String),
-						lastExecutionType: 'MANUAL',
+						lastExecutionType: 'SCHEDULED',
 						lastResponseBody: expect.any(String),
 						lastResponseHeaders: expect.any(Object),
 						lastResponseStatus: 200,
@@ -880,7 +936,7 @@ describe('/index.ts', () => {
 					],
 					task => {
 						// @ts-expect-error
-						return hooks.registerSubTask(task);
+						return hooks.registerSubTask(task) as Promise<Hooks.Task>;
 					}
 				)
 			);
@@ -893,8 +949,8 @@ describe('/index.ts', () => {
 		afterAll(async () => {
 			await Promise.all([
 				hooks.clearTasks('spec'),
-				hooks.clearTasks('spec#DELAYED'),
-				hooks.clearTasks('spec#DEBOUNCED'),
+				hooks.clearTasks('spec#DELAY'),
+				hooks.clearTasks('spec#DELAY-DEBOUNCE'),
 				hooks.webhooks.clearLogs('spec')
 			]);
 		});
@@ -924,12 +980,12 @@ describe('/index.ts', () => {
 		it('should fetch by [namespace] with delayed subTasks', async () => {
 			const res = await hooks.fetch({
 				namespace: 'spec',
-				type: 'DELAYED'
+				type: 'DELAY'
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
 				attributeNames: { '#namespace': 'namespace' },
-				attributeValues: { ':namespace': 'spec#DELAYED' },
+				attributeValues: { ':namespace': 'spec#DELAY' },
 				filterExpression: '',
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
@@ -939,7 +995,7 @@ describe('/index.ts', () => {
 
 			expect(res).toEqual({
 				count: 1,
-				items: expect.arrayContaining(_.filter(subTasks, { type: 'DELAYED' })),
+				items: expect.arrayContaining(_.filter(subTasks, { type: 'DELAY' })),
 				lastEvaluatedKey: null
 			});
 		});
@@ -947,12 +1003,12 @@ describe('/index.ts', () => {
 		it('should fetch by [namespace] with debounced subTasks', async () => {
 			const res = await hooks.fetch({
 				namespace: 'spec',
-				type: 'DEBOUNCED'
+				type: 'DELAY-DEBOUNCE'
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
 				attributeNames: { '#namespace': 'namespace' },
-				attributeValues: { ':namespace': 'spec#DEBOUNCED' },
+				attributeValues: { ':namespace': 'spec#DELAY-DEBOUNCE' },
 				filterExpression: '',
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
@@ -962,24 +1018,32 @@ describe('/index.ts', () => {
 
 			expect(res).toEqual({
 				count: 2,
-				items: expect.arrayContaining(_.filter(subTasks, { type: 'DEBOUNCED' })),
+				items: expect.arrayContaining(_.filter(subTasks, { type: 'DELAY-DEBOUNCE' })),
 				lastEvaluatedKey: null
 			});
 		});
 
-		it.skip('should fetch by [namespace] with identified debounced subTasks', async () => {
+		it('should fetch by [namespace] with identified debounced subTasks', async () => {
 			const res = await hooks.fetch({
-				delayDebounceId: 'debounce-id',
+				delayDebounceId: 'debounce-',
+				id: tasks[0].id,
+				idPrefix: true,
 				namespace: 'spec',
-				type: 'DEBOUNCED'
+				type: 'DELAY-DEBOUNCE'
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: { '#namespace': 'namespace' },
-				attributeValues: { ':namespace': 'spec#DEBOUNCED#debounce-id' },
+				attributeNames: {
+					'#namespace': 'namespace',
+					'#id': 'id'
+				},
+				attributeValues: {
+					':namespace': 'spec#DELAY-DEBOUNCE',
+					':id': `${tasks[0].id}#debounce-`
+				},
 				filterExpression: '',
 				limit: 100,
-				queryExpression: '#namespace = :namespace',
+				queryExpression: '#namespace = :namespace AND begins_with(#id, :id)',
 				scanIndexForward: true,
 				startKey: null
 			});
@@ -988,8 +1052,8 @@ describe('/index.ts', () => {
 				count: 1,
 				items: expect.arrayContaining(
 					_.filter(subTasks, {
-						namespace: 'spec#DEBOUNCED#debounce-id',
-						type: 'DEBOUNCED'
+						namespace: 'spec#DELAY-DEBOUNCE#debounce-id',
+						type: 'DELAY-DEBOUNCE'
 					})
 				),
 				lastEvaluatedKey: null
@@ -1429,29 +1493,172 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('getParentTaskAndCheckConsistency', () => {
+		let task: Hooks.Task;
+		let subTask: Hooks.Task;
+
+		beforeEach(async () => {
+			task = await hooks.registerTask({
+				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			// @ts-expect-error
+			subTask = await hooks.registerSubTask(
+				createTestSubTaskInput({
+					id: task.id,
+					namespace: task.namespace
+				})
+			);
+		});
+
+		afterEach(async () => {
+			await Promise.all([
+				hooks.clearTasks('spec'),
+				hooks.clearTasks('spec#DELAY'),
+				hooks.clearTasks('spec#DELAY-DEBOUNCE'),
+				hooks.webhooks.clearLogs('spec')
+			]);
+		});
+
+		it('should return parent task', async () => {
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency(subTask);
+
+			expect(res).toEqual(task);
+		});
+
+		it('should return null if parent task is not found', async () => {
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency({
+				...subTask,
+				parentNamespace: 'non-existent-namespace',
+				parentId: 'non-existent-id'
+			});
+
+			expect(res).toBeNull();
+		});
+
+		it('should return null if parent task is not active', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#status': 'status' },
+				attributeValues: { ':status': 'SUSPENDED' },
+				filter: {
+					item: { namespace: task.namespace, id: task.id }
+				},
+				updateExpression: 'SET #status = :status'
+			});
+
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency(subTask);
+
+			expect(res).toBeNull();
+		});
+
+		it('should return null if parent task is not a regular task', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#type': 'type' },
+				attributeValues: { ':type': 'DELAY-DEBOUNCE' },
+				filter: {
+					item: { namespace: task.namespace, id: task.id }
+				},
+				updateExpression: 'SET #type = :type'
+			});
+
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency(subTask);
+
+			expect(res).toBeNull();
+		});
+
+		it('should return null if subTask is not found', async () => {
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency({
+				...subTask,
+				id: 'non-existent-id',
+				namespace: 'non-existent-namespace'
+			});
+
+			expect(res).toBeNull();
+		});
+
+		it('should return null if subTask is not active', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#status': 'status' },
+				attributeValues: { ':status': 'SUSPENDED' },
+				filter: {
+					item: { namespace: subTask.namespace, id: subTask.id }
+				},
+				updateExpression: 'SET #status = :status'
+			});
+
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency(subTask);
+
+			expect(res).toBeNull();
+		});
+
+		it('should return null if subTask is a regular task', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#type': 'type' },
+				attributeValues: { ':type': 'REGULAR' },
+				filter: {
+					item: { namespace: subTask.namespace, id: subTask.id }
+				},
+				updateExpression: 'SET #type = :type'
+			});
+
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency(subTask);
+
+			expect(res).toBeNull();
+		});
+
+		it('should return null if subTask is not fresh', async () => {
+			await hooks.db.tasks.update({
+				filter: {
+					item: { namespace: subTask.namespace, id: subTask.id }
+				}
+			});
+
+			// @ts-expect-error
+			const res = await hooks.getParentTaskAndCheckConsistency(subTask);
+
+			expect(res).toBeNull();
+		});
+	});
+
 	describe('getTask', () => {
 		let task: Hooks.Task;
 		let subTasks: Hooks.Task[];
 
 		beforeAll(async () => {
 			task = await hooks.registerTask(createTestTask());
-			subTasks = await Promise.all([
-				// @ts-expect-error
-				hooks.registerSubTask(createTestSubTaskInput()),
-				// @ts-expect-error
-				hooks.registerSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true
-					})
-				),
-				// @ts-expect-error
-				hooks.registerSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayDebounceId: 'debounce-id'
-					})
+			subTasks = await Promise.all(
+				_.map(
+					[
+						createTestSubTaskInput({
+							id: task.id,
+							namespace: task.namespace
+						}),
+						createTestSubTaskInput({
+							delayDebounce: true,
+							id: task.id,
+							namespace: task.namespace
+						}),
+						createTestSubTaskInput({
+							delayDebounce: true,
+							delayDebounceId: 'debounce-id',
+							id: task.id,
+							namespace: task.namespace
+						})
+					],
+					task => {
+						// @ts-expect-error
+						return hooks.registerSubTask(task) as Promise<Hooks.Task>;
+					}
 				)
-			]);
+			);
 		});
 
 		beforeEach(async () => {
@@ -1469,6 +1676,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
+				consistentRead: false,
 				item: {
 					namespace: 'spec',
 					id: expect.any(String)
@@ -1483,13 +1691,14 @@ describe('/index.ts', () => {
 			const res = await hooks.getTask({
 				id: subTasks[0].parentId,
 				namespace: subTasks[0].parentNamespace,
-				type: 'DELAYED'
+				type: 'DELAY'
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
+				consistentRead: false,
 				item: {
-					namespace: 'spec#DELAYED',
-					id: 'test'
+					namespace: `${subTasks[0].parentNamespace}#DELAY`,
+					id: subTasks[0].parentId
 				},
 				prefix: true
 			});
@@ -1501,13 +1710,14 @@ describe('/index.ts', () => {
 			const res = await hooks.getTask({
 				id: subTasks[1].parentId,
 				namespace: subTasks[1].parentNamespace,
-				type: 'DEBOUNCED'
+				type: 'DELAY-DEBOUNCE'
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
+				consistentRead: false,
 				item: {
-					namespace: 'spec#DEBOUNCED',
-					id: 'test'
+					namespace: `${subTasks[1].parentNamespace}#DELAY-DEBOUNCE`,
+					id: subTasks[1].parentId
 				},
 				prefix: false
 			});
@@ -1520,13 +1730,14 @@ describe('/index.ts', () => {
 				delayDebounceId: 'debounce-id',
 				id: subTasks[2].parentId,
 				namespace: subTasks[2].parentNamespace,
-				type: 'DEBOUNCED'
+				type: 'DELAY-DEBOUNCE'
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
+				consistentRead: false,
 				item: {
-					namespace: 'spec#DEBOUNCED',
-					id: 'test#debounce-id'
+					namespace: `${subTasks[2].parentNamespace}#DELAY-DEBOUNCE`,
+					id: `${subTasks[2].parentId}#debounce-id`
 				},
 				prefix: false
 			});
@@ -1541,6 +1752,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
+				consistentRead: false,
 				item: {
 					namespace: 'spec',
 					id: 'non-existent-id'
@@ -1696,6 +1908,7 @@ describe('/index.ts', () => {
 					items: [
 						{
 							...tasks[1],
+							__ts: expect.any(Number),
 							__updatedAt: expect.any(String),
 							totalExecutions: 1000
 						}
@@ -2112,11 +2325,20 @@ describe('/index.ts', () => {
 	});
 
 	describe('registerSubTask', () => {
+		let task: Hooks.Task;
+
+		beforeEach(async () => {
+			task = await hooks.registerTask({
+				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+		});
+
 		afterEach(async () => {
 			await Promise.all([
 				hooks.clearTasks('spec'),
-				hooks.clearTasks('spec#DELAYED'),
-				hooks.clearTasks('spec#DEBOUNCED'),
+				hooks.clearTasks('spec#DELAY'),
+				hooks.clearTasks('spec#DELAY-DEBOUNCE'),
 				hooks.webhooks.clearLogs('spec')
 			]);
 		});
@@ -2127,27 +2349,28 @@ describe('/index.ts', () => {
 				delayDebounce: false,
 				delayUnit: 'minutes',
 				delayValue: 1,
-				id: 'test',
-				namespace: 'spec',
+				id: task.id,
+				namespace: task.namespace,
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'GET',
 				requestUrl: 'https://httpbin.org/anything'
 			});
 
-			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - Date.now();
+			const scheduledDateDiff = new Date(res!.scheduledDate).getTime() - Date.now();
 
 			expect(scheduledDateDiff).toBeGreaterThan(55 * 1000);
 			expect(scheduledDateDiff).toBeLessThan(60 * 1000);
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: expect.any(String),
-				id: expect.stringMatching(/^test#[0-9]+$/),
+				id: expect.stringMatching(`${task.id}#`),
 				idPrefix: '',
 				lastError: '',
 				lastErrorDate: '',
@@ -2162,11 +2385,11 @@ describe('/index.ts', () => {
 				manualDelayValue: 0,
 				manualEventPattern: '-',
 				manualReschedule: true,
-				namespace: 'spec#DELAYED',
+				namespace: `${task.namespace}#DELAY`,
 				noAfter: '',
 				noBefore: '',
-				parentId: 'test',
-				parentNamespace: 'spec',
+				parentId: task.id,
+				parentNamespace: task.namespace,
 				repeatInterval: 0,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
@@ -2181,7 +2404,7 @@ describe('/index.ts', () => {
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
-				type: 'DELAYED'
+				type: 'DELAY'
 			});
 		});
 
@@ -2191,27 +2414,28 @@ describe('/index.ts', () => {
 				delayDebounce: true,
 				delayUnit: 'minutes',
 				delayValue: 1,
-				id: 'test',
-				namespace: 'spec',
+				id: task.id,
+				namespace: task.namespace,
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'GET',
 				requestUrl: 'https://httpbin.org/anything'
 			});
 
-			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - Date.now();
+			const scheduledDateDiff = new Date(res!.scheduledDate).getTime() - Date.now();
 
 			expect(scheduledDateDiff).toBeGreaterThan(55 * 1000);
 			expect(scheduledDateDiff).toBeLessThan(60 * 1000);
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: expect.any(String),
-				id: 'test',
+				id: task.id,
 				idPrefix: '',
 				lastError: '',
 				lastErrorDate: '',
@@ -2226,11 +2450,11 @@ describe('/index.ts', () => {
 				manualDelayValue: 0,
 				manualEventPattern: '-',
 				manualReschedule: true,
-				namespace: 'spec#DEBOUNCED',
+				namespace: `${task.namespace}#DELAY-DEBOUNCE`,
 				noAfter: '',
 				noBefore: '',
-				parentId: 'test',
-				parentNamespace: 'spec',
+				parentId: task.id,
+				parentNamespace: task.namespace,
 				repeatInterval: 0,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
@@ -2245,11 +2469,77 @@ describe('/index.ts', () => {
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
-				type: 'DEBOUNCED'
+				type: 'DELAY-DEBOUNCE'
 			});
 		});
 
 		it('should create identified debounced subTask', async () => {
+			// @ts-expect-error
+			const res = await hooks.registerSubTask({
+				delayDebounce: true,
+				delayDebounceId: 'debounce-id',
+				delayUnit: 'minutes',
+				delayValue: 1,
+				id: task.id,
+				namespace: task.namespace,
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			const scheduledDateDiff = new Date(res!.scheduledDate).getTime() - Date.now();
+
+			expect(scheduledDateDiff).toBeGreaterThan(55 * 1000);
+			expect(scheduledDateDiff).toBeLessThan(60 * 1000);
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				firstErrorDate: '',
+				firstExecutionDate: '',
+				firstScheduledDate: expect.any(String),
+				id: `${task.id}#debounce-id`,
+				idPrefix: '',
+				lastError: '',
+				lastErrorDate: '',
+				lastErrorExecutionType: '',
+				lastExecutionDate: '',
+				lastExecutionType: '',
+				lastResponseBody: '',
+				lastResponseHeaders: {},
+				lastResponseStatus: 0,
+				manualDelayDebounce: false,
+				manualDelayUnit: 'minutes',
+				manualDelayValue: 0,
+				manualEventPattern: '-',
+				manualReschedule: true,
+				namespace: `${task.namespace}#DELAY-DEBOUNCE`,
+				noAfter: '',
+				noBefore: '',
+				parentId: task.id,
+				parentNamespace: task.namespace,
+				repeatInterval: 0,
+				repeatMax: 0,
+				repeatUnit: 'minutes',
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/anything',
+				retryLimit: 3,
+				scheduledDate: expect.any(String),
+				status: 'ACTIVE',
+				totalErrors: 0,
+				totalExecutions: 0,
+				totalFailedExecutions: 0,
+				totalSuccessfulExecutions: 0,
+				type: 'DELAY-DEBOUNCE'
+			});
+		});
+
+		it('should not create if no parent task', async () => {
 			// @ts-expect-error
 			const res = await hooks.registerSubTask({
 				delayDebounce: true,
@@ -2264,54 +2554,61 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything'
 			});
 
-			const scheduledDateDiff = new Date(res.scheduledDate).getTime() - Date.now();
+			expect(res).toBeNull();
+		});
 
-			expect(scheduledDateDiff).toBeGreaterThan(55 * 1000);
-			expect(scheduledDateDiff).toBeLessThan(60 * 1000);
-			expect(res).toEqual({
-				__createdAt: expect.any(String),
-				__namespace__manualEventPattern: '-',
-				__updatedAt: expect.any(String),
-				concurrency: false,
-				firstErrorDate: '',
-				firstExecutionDate: '',
-				firstScheduledDate: expect.any(String),
-				id: 'test#debounce-id',
-				idPrefix: '',
-				lastError: '',
-				lastErrorDate: '',
-				lastErrorExecutionType: '',
-				lastExecutionDate: '',
-				lastExecutionType: '',
-				lastResponseBody: '',
-				lastResponseHeaders: {},
-				lastResponseStatus: 0,
-				manualDelayDebounce: false,
-				manualDelayUnit: 'minutes',
-				manualDelayValue: 0,
-				manualEventPattern: '-',
-				manualReschedule: true,
-				namespace: 'spec#DEBOUNCED',
-				noAfter: '',
-				noBefore: '',
-				parentId: 'test',
-				parentNamespace: 'spec',
-				repeatInterval: 0,
-				repeatMax: 0,
-				repeatUnit: 'minutes',
+		it('should not create if parent task is not active', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#status': 'status' },
+				attributeValues: { ':processing': 'PROCESSING' },
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #status = :processing'
+			});
+
+			// @ts-expect-error
+			const res = await hooks.registerSubTask({
+				delayDebounce: true,
+				delayDebounceId: 'debounce-id',
+				delayUnit: 'minutes',
+				delayValue: 1,
+				id: task.id,
+				namespace: task.namespace,
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'GET',
-				requestUrl: 'https://httpbin.org/anything',
-				retryLimit: 3,
-				scheduledDate: expect.any(String),
-				status: 'ACTIVE',
-				totalErrors: 0,
-				totalExecutions: 0,
-				totalFailedExecutions: 0,
-				totalSuccessfulExecutions: 0,
-				type: 'DEBOUNCED'
+				requestUrl: 'https://httpbin.org/anything'
 			});
+
+			expect(res).toBeNull();
+		});
+
+		it('should not create if parent task is not a regular task', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#type': 'type' },
+				attributeValues: { ':delay': 'DELAY' },
+				filter: {
+					item: { namespace: 'spec', id: task.id }
+				},
+				updateExpression: 'SET #type = :delay'
+			});
+
+			// @ts-expect-error
+			const res = await hooks.registerSubTask({
+				delayDebounce: true,
+				delayDebounceId: 'debounce-id',
+				delayUnit: 'minutes',
+				delayValue: 1,
+				id: task.id,
+				namespace: task.namespace,
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			expect(res).toBeNull();
 		});
 	});
 
@@ -2415,6 +2712,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
@@ -2473,6 +2771,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: 'spec#test-event-pattern',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
@@ -2594,6 +2893,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: expect.any(String),
@@ -2622,8 +2922,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -2694,6 +2994,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: true,
 				firstErrorDate: expect.any(String),
@@ -2722,8 +3023,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -2803,6 +3104,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: expect.any(String),
@@ -2831,8 +3133,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -3003,6 +3305,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
@@ -3031,8 +3334,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -3119,6 +3422,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: true,
 				firstErrorDate: '',
@@ -3147,8 +3451,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -3244,6 +3548,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
@@ -3272,8 +3577,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -3368,6 +3673,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
@@ -3396,8 +3702,8 @@ describe('/index.ts', () => {
 				repeatInterval: 0,
 				repeatMax: 0,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -3492,6 +3798,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				__createdAt: expect.any(String),
 				__namespace__manualEventPattern: '-',
+				__ts: expect.any(Number),
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				firstErrorDate: '',
@@ -3520,8 +3827,8 @@ describe('/index.ts', () => {
 				repeatInterval: 30,
 				repeatMax: 1,
 				repeatUnit: 'minutes',
-				requestBody: null,
-				requestHeaders: null,
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3,
@@ -3618,6 +3925,7 @@ describe('/index.ts', () => {
 				expect(res).toEqual({
 					__createdAt: expect.any(String),
 					__namespace__manualEventPattern: '-',
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					concurrency: false,
 					firstErrorDate: '',
@@ -3646,8 +3954,8 @@ describe('/index.ts', () => {
 					repeatInterval: 30,
 					repeatMax: 0,
 					repeatUnit: 'minutes',
-					requestBody: null,
-					requestHeaders: null,
+					requestBody: { a: 1 },
+					requestHeaders: { a: '1' },
 					requestMethod: 'POST',
 					requestUrl: 'https://httpbin.org/anything',
 					retryLimit: 3,
@@ -3742,6 +4050,7 @@ describe('/index.ts', () => {
 				expect(res).toEqual({
 					__createdAt: expect.any(String),
 					__namespace__manualEventPattern: '-',
+					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
 					concurrency: false,
 					firstErrorDate: '',
@@ -3770,8 +4079,8 @@ describe('/index.ts', () => {
 					repeatInterval: 30,
 					repeatMax: 0,
 					repeatUnit: 'minutes',
-					requestBody: null,
-					requestHeaders: null,
+					requestBody: { a: 1 },
+					requestHeaders: { a: '1' },
 					requestMethod: 'POST',
 					requestUrl: 'https://httpbin.org/anything',
 					retryLimit: 3,
@@ -3922,18 +4231,12 @@ describe('/index.ts', () => {
 						createTestTask(0, {
 							manualEventPattern: 'event-pattern-1',
 							idPrefix: 'id-prefix-1',
-							requestBody: { a: 1 },
-							requestHeaders: { a: '1' },
-							requestMethod: 'GET',
-							requestUrl: 'https://httpbin.org/anything'
+							requestMethod: 'GET'
 						}),
 						createTestTask(0, {
 							manualEventPattern: 'event-pattern-2',
 							idPrefix: 'id-prefix-2',
-							requestBody: { a: 1 },
-							requestHeaders: { a: '1' },
-							requestMethod: 'GET',
-							requestUrl: 'https://httpbin.org/anything'
+							requestMethod: 'GET'
 						}),
 						createTestTask(1000)
 					],
@@ -3963,6 +4266,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.callWebhook).toHaveBeenCalledWith({
 				date: expect.any(Date),
+				delayDebounceId: '',
 				executionType: 'SCHEDULED',
 				tasks: expect.any(Array)
 			});
@@ -4004,6 +4308,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.callWebhook).toHaveBeenCalledWith({
 				date: expect.any(Date),
+				delayDebounceId: '',
 				executionType: 'MANUAL',
 				tasks: expect.any(Array)
 			});
@@ -4049,6 +4354,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.callWebhook).toHaveBeenCalledWith({
 				date: expect.any(Date),
+				delayDebounceId: '',
 				executionType: 'MANUAL',
 				tasks: expect.any(Array)
 			});
@@ -4115,6 +4421,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.callWebhook).toHaveBeenCalledWith({
 				date: expect.any(Date),
+				delayDebounceId: '',
 				executionType: 'MANUAL',
 				tasks: expect.any(Array)
 			});
@@ -4138,8 +4445,9 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should works MANUAL by id with [body, headers, method, url]', async () => {
+		it('should works MANUAL by id with [body, delayDebounceId, headers, method, url]', async () => {
 			const res = await hooks.trigger({
+				delayDebounceId: 'debounce-id',
 				id: 'id-prefix-',
 				idPrefix: true,
 				namespace: 'spec',
@@ -4160,6 +4468,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.callWebhook).toHaveBeenCalledWith({
 				date: expect.any(Date),
+				delayDebounceId: 'debounce-id',
 				executionType: 'MANUAL',
 				tasks: expect.any(Array)
 			});

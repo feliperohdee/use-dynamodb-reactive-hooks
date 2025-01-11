@@ -10,7 +10,7 @@ import zDefault from 'zod-default-instance';
 
 import schema from './index.schema';
 
-const DEFAULT_CONCURRENCY = 25;
+const DEFAULT_MAX_CONCURRENCY = 25;
 const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
@@ -126,7 +126,7 @@ class Hooks {
 
 		this.customWebhookCall = options.webhookCaller;
 		this.db = { tasks };
-		this.maxConcurrency = options.maxConcurrency || DEFAULT_CONCURRENCY;
+		this.maxConcurrency = options.maxConcurrency || DEFAULT_MAX_CONCURRENCY;
 		this.maxErrors = options.maxErrors || 5;
 		this.webhooks = webhooks;
 	}
@@ -162,10 +162,11 @@ class Hooks {
 
 			const promiseTask = async () => {
 				try {
-					// handle delay
+					// handle delayed tasks registering subTasks to handle them afterwards
 					if (args.executionType === 'MANUAL' && task.manualDelayValue > 0) {
 						return await this.registerSubTask({
 							delayDebounce: task.manualDelayDebounce,
+							delayDebounceId: args.delayDebounceId || '',
 							delayUnit: task.manualDelayUnit,
 							delayValue: task.manualDelayValue,
 							id: task.id,
@@ -187,20 +188,7 @@ class Hooks {
 					} = null;
 
 					if (task.parentId && task.parentNamespace) {
-						// delete subTask
-						await this.db.tasks.delete({
-							filter: {
-								item: {
-									namespace: task.namespace,
-									id: task.id
-								}
-							}
-						});
-
-						const parentTask = await this.getTask({
-							id: task.parentId,
-							namespace: task.parentNamespace
-						});
+						const parentTask = await this.getParentTaskAndCheckConsistency(task);
 
 						if (!parentTask) {
 							return null;
@@ -228,7 +216,7 @@ class Hooks {
 					}
 
 					const log = await this.webhooks.trigger({
-						idPrefix: _.compact([task.idPrefix, args.executionType, subTaskRequest?.type]).join('#'),
+						idPrefix: _.compact([task.idPrefix, args.executionType, subTaskRequest?.type || task.type]).join('#'),
 						namespace: task.namespace,
 						requestBody: subTaskRequest?.requestBody || task.requestBody,
 						requestHeaders: subTaskRequest?.requestHeaders || task.requestHeaders,
@@ -259,9 +247,7 @@ class Hooks {
 				return task;
 			};
 
-			if (promiseTask) {
-				promiseTasks = [...promiseTasks, promiseTask];
-			}
+			promiseTasks = [...promiseTasks, promiseTask];
 		}
 
 		const res = await promiseAllSettled(promiseTasks, this.maxConcurrency);
@@ -315,12 +301,20 @@ class Hooks {
 	async fetch(input: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
 		const args = await schema.fetchInput.parseAsync(input);
 
-		if (args.type === 'DEBOUNCED') {
-			args.namespace = `${args.namespace}#DEBOUNCED`;
+		if (args.type === 'DELAY-DEBOUNCE') {
+			args.namespace = `${args.namespace}#DELAY-DEBOUNCE`;
+
+			if (args.delayDebounceId) {
+				if (!args.id) {
+					throw new Error('id is required for queries with delayDebounceId');
+				}
+
+				args.id = `${args.id}#${args.delayDebounceId}`;
+			}
 		}
 
-		if (args.type === 'DELAYED') {
-			args.namespace = `${args.namespace}#DELAYED`;
+		if (args.type === 'DELAY') {
+			args.namespace = `${args.namespace}#DELAY`;
 		}
 
 		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
@@ -491,26 +485,60 @@ class Hooks {
 		return this.webhooks.fetchLogs(input);
 	}
 
-	async getTask(input: Hooks.GetInput): Promise<Hooks.Task | null> {
+	private async getParentTaskAndCheckConsistency(input: Hooks.Task): Promise<Hooks.Task | null> {
+		if (!input.parentId || !input.parentNamespace) {
+			return null;
+		}
+
+		const parentTask = await this.getTask(
+			{
+				id: input.parentId,
+				namespace: input.parentNamespace
+			},
+			true
+		);
+
+		if (!parentTask || parentTask.status !== 'ACTIVE' || parentTask.type !== 'REGULAR') {
+			return null;
+		}
+
+		// check if task was refreshed
+		const subTask = await this.getTask(
+			{
+				id: input.id,
+				namespace: input.namespace
+			},
+			true
+		);
+
+		if (!subTask || subTask.status !== 'ACTIVE' || subTask.type === 'REGULAR' || subTask.__ts !== input.__ts) {
+			return null;
+		}
+
+		return parentTask;
+	}
+
+	async getTask(input: Hooks.GetInput, consistentRead: boolean = false): Promise<Hooks.Task | null> {
 		const args = await schema.getTaskInput.parseAsync(input);
 
 		let [id, namespace] = [args.id, args.namespace];
 		let prefix = false;
-		
-		if (args.type === 'DEBOUNCED') {
-			namespace = `${args.namespace}#DEBOUNCED`;
+
+		if (args.type === 'DELAY-DEBOUNCE') {
+			namespace = `${args.namespace}#DELAY-DEBOUNCE`;
 
 			if (args.delayDebounceId) {
 				id = _.compact([args.id, args.delayDebounceId]).join('#');
 			}
 		}
 
-		if (args.type === 'DELAYED') {
-			namespace = `${args.namespace}#DELAYED`;
+		if (args.type === 'DELAY') {
+			namespace = `${args.namespace}#DELAY`;
 			prefix = true;
 		}
 
 		const res = await this.db.tasks.get({
+			consistentRead,
 			item: { namespace, id },
 			prefix
 		});
@@ -614,20 +642,39 @@ class Hooks {
 		return query(queryOptions);
 	}
 
-	private async registerSubTask(input: Hooks.SubTaskInput): Promise<Hooks.Task> {
+	private async registerSubTask(input: Hooks.SubTaskInput): Promise<Hooks.Task | null> {
 		const args = await schema.subTaskInput.parseAsync(input);
+		const parentTask = await this.getTask(
+			{
+				id: args.id,
+				namespace: args.namespace
+			},
+			true
+		);
+
+		if (!parentTask) {
+			return null;
+		}
+
+		if (parentTask.status !== 'ACTIVE') {
+			return null;
+		}
+
+		if (parentTask.type !== 'REGULAR') {
+			return null;
+		}
 
 		let [id, namespace] = [args.id, args.namespace];
-		let type: 'DELAYED' | 'DEBOUNCED' = 'DELAYED';
+		let type: 'DELAY' | 'DELAY-DEBOUNCE' = 'DELAY';
 
 		if (args.delayDebounce) {
 			id = _.compact([args.id, args.delayDebounceId]).join('#');
-			namespace = `${args.namespace}#DEBOUNCED`;
-			type = 'DEBOUNCED';
+			namespace = `${args.namespace}#DELAY-DEBOUNCE`;
+			type = 'DELAY-DEBOUNCE';
 		} else {
 			id = [args.id, _.now()].join('#');
-			namespace = `${args.namespace}#DELAYED`;
-			type = 'DELAYED';
+			namespace = `${args.namespace}#DELAY`;
+			type = 'DELAY';
 		}
 
 		const scheduledDate = this.calculateNextSchedule(new Date().toISOString(), {
@@ -635,13 +682,13 @@ class Hooks {
 			value: args.delayValue
 		});
 
-		const res = await this.db.tasks.put(
+		return this.db.tasks.put<Hooks.Task>(
 			taskShape({
 				...args,
 				__namespace__manualEventPattern: '-',
 				firstScheduledDate: scheduledDate,
-				parentId: args.id,
-				parentNamespace: args.namespace,
+				parentId: parentTask.id,
+				parentNamespace: parentTask.namespace,
 				id,
 				manualEventPattern: '-',
 				namespace,
@@ -650,14 +697,13 @@ class Hooks {
 			}),
 			{ overwrite: true }
 		);
-
-		return _.omit(res, ['__ts']);
 	}
 
 	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
 		const args = await schema.taskInput.parseAsync(input);
 		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : '-';
-		const res = await this.db.tasks.put(
+
+		return this.db.tasks.put(
 			taskShape({
 				...args,
 				__namespace__manualEventPattern: args.manualEventPattern ? `${args.namespace}#${args.manualEventPattern}` : '-',
@@ -682,8 +728,6 @@ class Hooks {
 				scheduledDate
 			})
 		);
-
-		return _.omit(res, ['__ts']);
 	}
 
 	private async setTaskError(input: Hooks.SetTaskErrorInput): Promise<Hooks.Task> {
@@ -1057,6 +1101,7 @@ class Hooks {
 
 				request = {
 					body: args.requestBody || {},
+					delayDebounceId: args.delayDebounceId || '',
 					headers: args.requestHeaders || {},
 					method: args.requestMethod || '',
 					url: args.requestUrl || ''
@@ -1108,8 +1153,8 @@ class Hooks {
 
 					if (this.customWebhookCall) {
 						const res = await this.customWebhookCall({
-							delayDebounceId: queryActiveTasksOptions.delayDebounceId,
 							date,
+							delayDebounceId: request.delayDebounceId,
 							executionType,
 							tasks: items
 						});
@@ -1117,8 +1162,8 @@ class Hooks {
 						result.processed += _.size(res);
 					} else {
 						const res = await this.callWebhook({
-							delayDebounceId: queryActiveTasksOptions.delayDebounceId,
 							date,
+							delayDebounceId: request.delayDebounceId,
 							executionType,
 							tasks: items
 						});

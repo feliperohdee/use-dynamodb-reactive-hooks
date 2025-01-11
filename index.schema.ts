@@ -6,7 +6,7 @@ import z from 'zod';
 const timeUnit = z.enum(['minutes', 'hours', 'days']);
 const taskExecutionType = z.enum(['MANUAL', 'SCHEDULED']);
 const taskStatus = z.enum(['ACTIVE', 'MAX_ERRORS_REACHED', 'MAX_REPEAT_REACHED', 'SUSPENDED', 'PROCESSING']);
-const taskType = z.enum(['REGULAR', 'DEBOUNCED', 'DELAYED']);
+const taskType = z.enum(['REGULAR', 'DELAY-DEBOUNCE', 'DELAY']);
 
 const task = z.object({
 	__createdAt: z
@@ -16,6 +16,9 @@ const task = z.object({
 			return new Date().toISOString();
 		}),
 	__namespace__manualEventPattern: z.union([z.string(), z.literal('-')]),
+	__ts: z.number().default(() => {
+		return _.now();
+	}),
 	__updatedAt: z
 		.string()
 		.datetime()
@@ -96,6 +99,7 @@ const taskInput = task
 	.omit({
 		__createdAt: true,
 		__namespace__manualEventPattern: true,
+		__ts: true,
 		__updatedAt: true,
 		id: true,
 		firstErrorDate: true,
@@ -152,6 +156,7 @@ const taskInput = task
 
 const callWebhookInput = z.object({
 	date: z.date(),
+	delayDebounceId: z.string().optional(),
 	executionType: taskExecutionType,
 	tasks: z.array(task)
 });
