@@ -6,7 +6,7 @@ import z from 'zod';
 const timeUnit = z.enum(['minutes', 'hours', 'days']);
 const taskExecutionType = z.enum(['MANUAL', 'SCHEDULED']);
 const taskStatus = z.enum(['ACTIVE', 'MAX_ERRORS_REACHED', 'MAX_REPEAT_REACHED', 'SUSPENDED', 'PROCESSING']);
-const taskType = z.enum(['REGULAR', 'DELAY-DEBOUNCE', 'DELAY']);
+const taskType = z.enum(['PRIMARY', 'FORK', 'SUBTASK-DELAY', 'SUBTASK-DELAY-DEBOUNCE']);
 
 const task = z.object({
 	__createdAt: z
@@ -29,6 +29,7 @@ const task = z.object({
 	firstErrorDate: z.union([z.string().datetime(), z.literal('')]),
 	firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
 	firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
+	forkId: z.string(),
 	id: z.string(),
 	idPrefix: z.string(),
 	lastError: z.string(),
@@ -39,9 +40,6 @@ const task = z.object({
 	lastResponseBody: z.string(),
 	lastResponseHeaders: z.record(z.string()),
 	lastResponseStatus: z.number(),
-	manualDelayDebounce: z.boolean(),
-	manualDelayUnit: timeUnit,
-	manualDelayValue: z.number().min(0),
 	manualEventPattern: z.string(),
 	manualReschedule: z.boolean().default(true),
 	namespace: z.string(),
@@ -50,7 +48,7 @@ const task = z.object({
 	parentId: z.string(),
 	parentNamespace: z.string(),
 	repeatInterval: z.number().min(0),
-	repeatMax: z.number().min(0).default(0),
+	repeatMax: z.number().min(0),
 	repeatUnit: timeUnit,
 	requestBody: z.record(z.any()).nullable(),
 	requestHeaders: z.record(z.string()).nullable(),
@@ -62,7 +60,10 @@ const task = z.object({
 	totalErrors: z.number(),
 	totalExecutions: z.number(),
 	totalFailedExecutions: z.number(),
+	totalForks: z.number().min(0),
+	totalSubTasks: z.number().min(0),
 	totalSuccessfulExecutions: z.number(),
+	ttl: z.number().min(0),
 	type: taskType
 });
 
@@ -105,6 +106,7 @@ const taskInput = task
 		firstErrorDate: true,
 		firstExecutionDate: true,
 		firstScheduledDate: true,
+		forkId: true,
 		lastError: true,
 		lastErrorDate: true,
 		lastErrorExecutionType: true,
@@ -117,17 +119,17 @@ const taskInput = task
 		parentNamespace: true,
 		status: true,
 		totalErrors: true,
+		totalForks: true,
 		totalExecutions: true,
 		totalFailedExecutions: true,
+		totalSubTasks: true,
 		totalSuccessfulExecutions: true,
+		ttl: true,
 		type: true
 	})
 	.partial({
 		concurrency: true,
 		idPrefix: true,
-		manualDelayDebounce: true,
-		manualDelayUnit: true,
-		manualDelayValue: true,
 		manualEventPattern: true,
 		manualReschedule: true,
 		noAfter: true,
@@ -156,9 +158,17 @@ const taskInput = task
 
 const callWebhookInput = z.object({
 	date: z.date(),
-	delayDebounceId: z.string().optional(),
+	delayDebounce: z.boolean(),
+	delayUnit: timeUnit,
+	delayValue: z.number().min(0),
 	executionType: taskExecutionType,
+	forkId: z.string(),
 	tasks: z.array(task)
+});
+
+const checkExecuteTaskInput = z.object({
+	date: z.date(),
+	task
 });
 
 const deleteInput = z.object({
@@ -169,8 +179,8 @@ const deleteInput = z.object({
 const fetchInput = z
 	.object({
 		chunkLimit: z.number().min(1).optional(),
-		delayDebounceId: z.string().optional(),
 		desc: z.boolean().default(false),
+		forkId: z.string().optional(),
 		manualEventPattern: z.string().optional(),
 		manualEventPatternPrefix: z.boolean().default(false),
 		fromScheduledDate: z.string().datetime({ offset: true }).optional(),
@@ -209,7 +219,7 @@ const fetchInput = z
 
 const fetchLogsInput = Webhooks.schema.fetchLogsInput;
 const getTaskInput = z.object({
-	delayDebounceId: z.string().optional(),
+	forkId: z.string().optional(),
 	id: z.string(),
 	namespace: z.string(),
 	type: taskType.optional()
@@ -243,6 +253,24 @@ const queryActiveTasksInput = z.union([
 	queryActiveTasksInputBase
 ]);
 
+const registerForkTaskInput = z.object({
+	forkId: z.string(),
+	id: z.string(),
+	namespace: z.string()
+});
+
+const registerScheduledSubTaskInput = z.object({
+	delayDebounce: z.boolean(),
+	delayUnit: timeUnit,
+	delayValue: z.number().min(0),
+	id: z.string(),
+	namespace: z.string(),
+	requestBody: z.record(z.any()).nullable(),
+	requestHeaders: z.record(z.string()).nullable(),
+	requestMethod: Webhooks.schema.request.shape.method.default('GET'),
+	requestUrl: z.string().url()
+});
+
 const setTaskErrorInput = z.object({
 	error: z.instanceof(Error),
 	executionType: taskExecutionType,
@@ -251,7 +279,6 @@ const setTaskErrorInput = z.object({
 });
 
 const setTaskLockInput = z.object({
-	date: z.date(),
 	pid: z.string(),
 	task
 });
@@ -268,24 +295,14 @@ const setTaskSuccessInput = z.object({
 	task
 });
 
-const subTaskInput = z.object({
-	delayDebounce: z.boolean().optional(),
-	delayDebounceId: z.string().optional(),
-	delayUnit: timeUnit,
-	delayValue: z.number().min(0),
-	id: z.string(),
-	namespace: z.string(),
-	requestBody: z.record(z.any()).nullable(),
-	requestHeaders: z.record(z.string()).nullable(),
-	requestMethod: Webhooks.schema.request.shape.method.default('GET'),
-	requestUrl: z.string().url()
-});
-
 const triggerInput = z.union([
 	z.object({
 		conditionData: z.record(z.any()).optional(),
 		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
-		delayDebounceId: z.string().optional(),
+		delayDebounce: z.boolean().optional(),
+		delayUnit: timeUnit.optional(),
+		delayValue: z.number().min(0).optional(),
+		forkId: z.string().optional(),
 		id: z.string(),
 		idPrefix: z.boolean().default(false),
 		namespace: z.string(),
@@ -297,7 +314,10 @@ const triggerInput = z.union([
 	z.object({
 		conditionData: z.record(z.any()).optional(),
 		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
-		delayDebounceId: z.string().optional(),
+		delayDebounce: z.boolean().optional(),
+		delayUnit: timeUnit.optional(),
+		delayValue: z.number().min(0).optional(),
+		forkId: z.string().optional(),
 		manualEventPattern: z.string(),
 		manualEventPatternPrefix: z.boolean().default(false),
 		namespace: z.string(),
@@ -310,16 +330,18 @@ const triggerInput = z.union([
 
 export default {
 	callWebhookInput,
+	checkExecuteTaskInput,
 	deleteInput,
 	fetchInput,
 	fetchLogsInput,
 	getTaskInput,
 	log,
 	queryActiveTasksInput,
+	registerForkTaskInput,
+	registerScheduledSubTaskInput,
 	setTaskErrorInput,
 	setTaskLockInput,
 	setTaskSuccessInput,
-	subTaskInput,
 	task,
 	taskExecutionType,
 	taskInput,

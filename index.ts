@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { promiseAllSettled } from 'use-async-helpers';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import HttpError from 'use-http-error';
@@ -14,6 +14,7 @@ const DEFAULT_MAX_CONCURRENCY = 25;
 const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
+const SUBTASK_TTL_IN_MS = 15 * DAY_IN_MS;
 
 namespace Hooks {
 	export type ConstructorOptions = {
@@ -30,16 +31,18 @@ namespace Hooks {
 	};
 
 	export type CallWebhookInput = z.input<typeof schema.callWebhookInput>;
+	export type checkExecuteTaskInput = z.input<typeof schema.checkExecuteTaskInput>;
 	export type DeleteInput = z.input<typeof schema.deleteInput>;
 	export type FetchInput = z.input<typeof schema.fetchInput>;
 	export type FetchLogsInput = z.input<typeof schema.fetchLogsInput>;
 	export type GetInput = z.input<typeof schema.getTaskInput>;
 	export type Log = z.infer<typeof schema.log>;
 	export type QueryActiveTasksInput = z.input<typeof schema.queryActiveTasksInput>;
+	export type RegisterForkTaskInput = z.input<typeof schema.registerForkTaskInput>;
+	export type RegisterScheduledSubTaskInput = z.input<typeof schema.registerScheduledSubTaskInput>;
 	export type SetTaskErrorInput = z.input<typeof schema.setTaskErrorInput>;
 	export type SetTaskLockInput = z.input<typeof schema.setTaskLockInput>;
 	export type SetTaskSuccessInput = z.input<typeof schema.setTaskSuccessInput>;
-	export type SubTaskInput = z.input<typeof schema.subTaskInput>;
 	export type Task = z.infer<typeof schema.task>;
 	export type TaskExecutionType = z.infer<typeof schema.taskExecutionType>;
 	export type TaskInput = z.input<typeof schema.taskInput>;
@@ -53,6 +56,13 @@ namespace Hooks {
 const taskShape = (input: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => {
 	return zDefault(schema.task, input);
 };
+
+class TaskException extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'TaskException';
+	}
+}
 
 class Hooks {
 	public static schema = schema;
@@ -161,67 +171,77 @@ class Hooks {
 			let task: Hooks.Task = taskShape(item);
 
 			const promiseTask = async () => {
+				let overrideRequest: null | {
+					requestBody: Hooks.Task['requestBody'];
+					requestHeaders: Hooks.Task['requestHeaders'];
+					requestMethod: Hooks.Task['requestMethod'];
+					requestUrl: Hooks.Task['requestUrl'];
+					type: Hooks.Task['type'];
+				} = null;
+
 				try {
-					// handle delayed tasks registering subTasks to handle them afterwards
-					if (args.executionType === 'MANUAL' && task.manualDelayValue > 0) {
-						return await this.registerSubTask({
-							delayDebounce: task.manualDelayDebounce,
-							delayDebounceId: args.delayDebounceId || '',
-							delayUnit: task.manualDelayUnit,
-							delayValue: task.manualDelayValue,
-							id: task.id,
-							namespace: task.namespace,
-							requestBody: task.requestBody,
-							requestHeaders: task.requestHeaders,
-							requestMethod: task.requestMethod,
-							requestUrl: task.requestUrl
-						});
+					if (args.executionType === 'MANUAL') {
+						if (args.forkId) {
+							task = await this.registerForkTask({
+								forkId: args.forkId,
+								id: task.id,
+								namespace: task.namespace
+							});
+						}
+
+						// handle delayed tasks registering subTasks to handle them afterwards
+						if (args.delayValue > 0) {
+							return await this.registerScheduledSubTask({
+								delayDebounce: args.delayDebounce,
+								delayUnit: args.delayUnit,
+								delayValue: args.delayValue,
+								id: task.id,
+								namespace: task.namespace,
+								requestBody: task.requestBody,
+								requestHeaders: task.requestHeaders,
+								requestMethod: task.requestMethod,
+								requestUrl: task.requestUrl
+							});
+						}
 					}
 
 					// handle subTasks
-					let subTaskRequest: null | {
-						requestBody: Hooks.Task['requestBody'];
-						requestHeaders: Hooks.Task['requestHeaders'];
-						requestMethod: Hooks.Task['requestMethod'];
-						requestUrl: Hooks.Task['requestUrl'];
-						type: Hooks.Task['type'];
-					} = null;
+					if (args.executionType === 'SCHEDULED') {
+						if (task.type === 'SUBTASK-DELAY' || task.type === 'SUBTASK-DELAY-DEBOUNCE') {
+							// check if parent task is not suspended
+							const parentTask = await this.checkParentTask(task);
 
-					if (task.parentId && task.parentNamespace) {
-						const parentTask = await this.getParentTaskAndCheckConsistency(task);
+							overrideRequest = {
+								requestBody: task.requestBody,
+								requestHeaders: task.requestHeaders,
+								requestMethod: task.requestMethod,
+								requestUrl: task.requestUrl,
+								type: task.type
+							};
 
-						if (!parentTask) {
-							return null;
+							task = parentTask;
 						}
-
-						subTaskRequest = {
-							requestBody: task.requestBody,
-							requestHeaders: task.requestHeaders,
-							requestMethod: task.requestMethod,
-							requestUrl: task.requestUrl,
-							type: task.type
-						};
-
-						task = parentTask;
 					}
+
+					// check if task is able to run just before execution
+					task = await this.checkExecuteTask({
+						date: args.date,
+						task
+					});
 
 					// concurrency is disabled by default (exclusive execution)
 					if (!task.concurrency) {
 						// update task status to processing and set pid disallowing concurrency
-						task = await this.setTaskLock({
-							date: args.date,
-							pid,
-							task
-						});
+						task = await this.setTaskLock({ pid, task });
 					}
 
 					const log = await this.webhooks.trigger({
-						idPrefix: _.compact([task.idPrefix, args.executionType, subTaskRequest?.type || task.type]).join('#'),
+						idPrefix: _.compact([task.idPrefix, task.id, args.executionType, overrideRequest?.type || task.type]).join('#'),
 						namespace: task.namespace,
-						requestBody: subTaskRequest?.requestBody || task.requestBody,
-						requestHeaders: subTaskRequest?.requestHeaders || task.requestHeaders,
-						requestMethod: subTaskRequest?.requestMethod || task.requestMethod,
-						requestUrl: subTaskRequest?.requestUrl || task.requestUrl,
+						requestBody: overrideRequest?.requestBody || task.requestBody,
+						requestHeaders: overrideRequest?.requestHeaders || task.requestHeaders,
+						requestMethod: overrideRequest?.requestMethod || task.requestMethod,
+						requestUrl: overrideRequest?.requestUrl || task.requestUrl,
 						retryLimit: task.retryLimit
 					});
 
@@ -232,7 +252,7 @@ class Hooks {
 						task
 					});
 				} catch (err) {
-					if (err instanceof ConditionalCheckFailedException) {
+					if (err instanceof ConditionalCheckFailedException || err instanceof TaskException) {
 						return null;
 					}
 
@@ -255,6 +275,79 @@ class Hooks {
 		return _.compact(_.map(res, 'value'));
 	}
 
+	private async checkExecuteTask(input: Hooks.checkExecuteTaskInput): Promise<Hooks.Task> {
+		let args = await schema.checkExecuteTaskInput.parseAsync(input);
+		let res = await this.db.tasks.get<Hooks.Task & { pid: string }>({
+			consistentRead: true,
+			item: {
+				id: args.task.id,
+				namespace: args.task.namespace
+			}
+		});
+
+		let pid = res?.pid || '';
+
+		if (!res) {
+			throw new TaskException('Task not found');
+		}
+
+		const task = taskShape(res);
+
+		if (args.task.__ts !== task.__ts) {
+			throw new TaskException('Task was modified');
+		}
+
+		if (task.noAfter && args.date > new Date(task.noAfter)) {
+			throw new TaskException('Task must not be executed after the noAfter date');
+		}
+
+		if (task.noBefore && args.date < new Date(task.noBefore)) {
+			throw new TaskException('Task must not be executed before the noBefore date');
+		}
+
+		if (pid) {
+			throw new TaskException('Task is already running');
+		}
+
+		if (task.repeatMax > 0 && task.totalExecutions >= task.repeatMax) {
+			throw new TaskException('Task has reached the repeat max');
+		}
+
+		if (task.status !== 'ACTIVE') {
+			throw new TaskException('Task is not in a valid state');
+		}
+
+		return task;
+	}
+
+	private async checkParentTask(input: Hooks.Task): Promise<Hooks.Task> {
+		if (!input.parentId || !input.parentNamespace) {
+			throw new TaskException('Input is not a subtask');
+		}
+
+		const parentTask = await this.getTask(
+			{
+				id: input.parentId,
+				namespace: input.parentNamespace
+			},
+			true
+		);
+
+		if (!parentTask) {
+			throw new TaskException('Parent task not found');
+		}
+
+		if (parentTask.status === 'SUSPENDED') {
+			throw new TaskException('Parent task is suspended');
+		}
+
+		if (parentTask.type !== 'PRIMARY' && parentTask.type !== 'FORK') {
+			throw new TaskException('Parent task must be a primary or fork task');
+		}
+
+		return parentTask;
+	}
+
 	async clearTasks(namespace: string): Promise<{ count: number }> {
 		return this.db.tasks.clear(namespace);
 	}
@@ -273,14 +366,14 @@ class Hooks {
 		return res ? taskShape(res) : null;
 	}
 
-	async deleteMany(
+	async deleteManyTasks(
 		args: Omit<Hooks.FetchInput, 'limit' | 'onChunk' | 'startKey'>
 	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
 		args = await schema.fetchInput.parseAsync(args);
 
 		let deleted: { id: string; namespace: string }[] = [];
 
-		await this.fetch({
+		await this.fetchTasks({
 			...args,
 			chunkLimit: args.chunkLimit || 100,
 			limit: Infinity,
@@ -298,23 +391,19 @@ class Hooks {
 		};
 	}
 
-	async fetch(input: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
+	async fetchLogs(input: Hooks.FetchLogsInput): Promise<Dynamodb.MultiResponse<Hooks.Log, false>> {
+		return this.webhooks.fetchLogs(input);
+	}
+
+	async fetchTasks(input: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
 		const args = await schema.fetchInput.parseAsync(input);
 
-		if (args.type === 'DELAY-DEBOUNCE') {
-			args.namespace = `${args.namespace}#DELAY-DEBOUNCE`;
-
-			if (args.delayDebounceId) {
-				if (!args.id) {
-					throw new Error('id is required for queries with delayDebounceId');
-				}
-
-				args.id = `${args.id}#${args.delayDebounceId}`;
-			}
+		if (args.type === 'SUBTASK-DELAY') {
+			args.namespace = `${args.namespace}#SUBTASK-DELAY`;
 		}
 
-		if (args.type === 'DELAY') {
-			args.namespace = `${args.namespace}#DELAY`;
+		if (args.type === 'SUBTASK-DELAY-DEBOUNCE') {
+			args.namespace = `${args.namespace}#SUBTASK-DELAY-DEBOUNCE`;
 		}
 
 		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
@@ -328,6 +417,7 @@ class Hooks {
 		};
 
 		const filters = {
+			forkId: '',
 			manualEventPattern: '',
 			scheduledDate: '',
 			status: ''
@@ -350,6 +440,21 @@ class Hooks {
 
 		if (args.onChunk) {
 			queryOptions.onChunk = args.onChunk;
+		}
+
+		// FILTER BY FORK_ID
+		if (args.forkId) {
+			queryOptions.attributeNames = {
+				...queryOptions.attributeNames,
+				'#forkId': 'forkId'
+			};
+
+			queryOptions.attributeValues = {
+				...queryOptions.attributeValues,
+				':forkId': args.forkId
+			};
+
+			filters.forkId = '#forkId = :forkId';
 		}
 
 		// FILTER BY EVENT_PATTERN
@@ -405,6 +510,10 @@ class Hooks {
 
 		// QUERY BY ID INDEX
 		if (args.id) {
+			if (args.forkId) {
+				args.id = _.compact([args.id, args.forkId]).join('#');
+			}
+
 			queryOptions.attributeNames = {
 				...queryOptions.attributeNames,
 				'#id': 'id'
@@ -481,60 +590,23 @@ class Hooks {
 		return query(queryOptions);
 	}
 
-	async fetchLogs(input: Hooks.FetchLogsInput): Promise<Dynamodb.MultiResponse<Hooks.Log, false>> {
-		return this.webhooks.fetchLogs(input);
-	}
-
-	private async getParentTaskAndCheckConsistency(input: Hooks.Task): Promise<Hooks.Task | null> {
-		if (!input.parentId || !input.parentNamespace) {
-			return null;
-		}
-
-		const parentTask = await this.getTask(
-			{
-				id: input.parentId,
-				namespace: input.parentNamespace
-			},
-			true
-		);
-
-		if (!parentTask || parentTask.status !== 'ACTIVE' || parentTask.type !== 'REGULAR') {
-			return null;
-		}
-
-		// check if task was refreshed
-		const subTask = await this.getTask(
-			{
-				id: input.id,
-				namespace: input.namespace
-			},
-			true
-		);
-
-		if (!subTask || subTask.status !== 'ACTIVE' || subTask.type === 'REGULAR' || subTask.__ts !== input.__ts) {
-			return null;
-		}
-
-		return parentTask;
-	}
-
 	async getTask(input: Hooks.GetInput, consistentRead: boolean = false): Promise<Hooks.Task | null> {
 		const args = await schema.getTaskInput.parseAsync(input);
 
 		let [id, namespace] = [args.id, args.namespace];
 		let prefix = false;
 
-		if (args.type === 'DELAY-DEBOUNCE') {
-			namespace = `${args.namespace}#DELAY-DEBOUNCE`;
-
-			if (args.delayDebounceId) {
-				id = _.compact([args.id, args.delayDebounceId]).join('#');
-			}
+		if (args.forkId) {
+			id = _.compact([args.id, args.forkId]).join('#');
 		}
 
-		if (args.type === 'DELAY') {
-			namespace = `${args.namespace}#DELAY`;
+		if (args.type === 'SUBTASK-DELAY') {
+			namespace = `${args.namespace}#SUBTASK-DELAY`;
 			prefix = true;
+		}
+
+		if (args.type === 'SUBTASK-DELAY-DEBOUNCE') {
+			namespace = `${args.namespace}#SUBTASK-DELAY-DEBOUNCE`;
 		}
 
 		const res = await this.db.tasks.get({
@@ -642,8 +714,8 @@ class Hooks {
 		return query(queryOptions);
 	}
 
-	private async registerSubTask(input: Hooks.SubTaskInput): Promise<Hooks.Task | null> {
-		const args = await schema.subTaskInput.parseAsync(input);
+	private async registerForkTask(input: Hooks.RegisterForkTaskInput, bypassChecks: boolean = false): Promise<Hooks.Task> {
+		const args = await schema.registerForkTaskInput.parseAsync(input);
 		const parentTask = await this.getTask(
 			{
 				id: args.id,
@@ -653,50 +725,353 @@ class Hooks {
 		);
 
 		if (!parentTask) {
-			return null;
+			throw new TaskException('Parent task not found');
 		}
 
-		if (parentTask.status !== 'ACTIVE') {
-			return null;
+		if (!bypassChecks) {
+			if (parentTask.status === 'SUSPENDED') {
+				throw new TaskException('Parent task is suspended');
+			}
+
+			if (parentTask.type !== 'PRIMARY') {
+				throw new TaskException('Parent task must be a primary task');
+			}
 		}
 
-		if (parentTask.type !== 'REGULAR') {
-			return null;
+		const date = new Date();
+
+		try {
+			await this.db.tasks.transaction({
+				TransactItems: [
+					{
+						Update: {
+							ConditionExpression: ['#status <> :suspended', '#type = :primary'].join(' AND '),
+							ExpressionAttributeNames: {
+								'#status': 'status',
+								'#totalForks': 'totalForks',
+								'#ts': '__ts',
+								'#type': 'type',
+								'#updatedAt': '__updatedAt'
+							},
+							ExpressionAttributeValues: {
+								':one': 1,
+								':primary': 'PRIMARY',
+								':suspended': 'SUSPENDED',
+								':ts': date.getTime(),
+								':updatedAt': date.toISOString()
+							},
+							Key: {
+								namespace: parentTask.namespace,
+								id: parentTask.id
+							},
+							UpdateExpression: 'ADD #totalForks :one SET #ts = :ts, #updatedAt = :updatedAt',
+							TableName: this.db.tasks.table
+						}
+					},
+					{
+						Put: {
+							ConditionExpression: 'attribute_not_exists(#namespace)',
+							ExpressionAttributeNames: {
+								'#namespace': 'namespace'
+							},
+							Item: taskShape({
+								__createdAt: date.toISOString(),
+								__namespace__manualEventPattern: parentTask.__namespace__manualEventPattern,
+								__ts: date.getTime(),
+								__updatedAt: date.toISOString(),
+								concurrency: parentTask.concurrency,
+								firstScheduledDate: parentTask.scheduledDate,
+								forkId: args.forkId,
+								id: `${args.id}#${args.forkId}`,
+								idPrefix: parentTask.idPrefix,
+								manualEventPattern: parentTask.manualEventPattern,
+								manualReschedule: parentTask.manualReschedule,
+								namespace: parentTask.namespace,
+								noAfter: parentTask.noAfter,
+								noBefore: parentTask.noBefore,
+								parentId: parentTask.id,
+								parentNamespace: parentTask.namespace,
+								repeatInterval: parentTask.repeatInterval,
+								repeatMax: parentTask.repeatMax,
+								repeatUnit: parentTask.repeatUnit,
+								requestBody: parentTask.requestBody,
+								requestHeaders: parentTask.requestHeaders,
+								requestMethod: parentTask.requestMethod,
+								requestUrl: parentTask.requestUrl,
+								retryLimit: parentTask.retryLimit,
+								scheduledDate: parentTask.scheduledDate,
+								status: 'ACTIVE',
+								type: 'FORK'
+							}),
+							TableName: this.db.tasks.table
+						}
+					}
+				]
+			});
+
+			return (await this.getTask(
+				{
+					id: `${args.id}#${args.forkId}`,
+					namespace: args.namespace
+				},
+				true
+			))!;
+		} catch (err) {
+			if (err instanceof TransactionCanceledException) {
+				if (err.CancellationReasons?.[0].Code === 'ConditionalCheckFailed') {
+					throw new TaskException('Parent task is not in a valid state');
+				}
+
+				if (err.CancellationReasons?.[1].Code === 'ConditionalCheckFailed') {
+					throw new TaskException('Fork task already exists');
+				}
+			}
+
+			throw err;
+		}
+	}
+
+	private async registerScheduledSubTask(input: Hooks.RegisterScheduledSubTaskInput, bypassChecks: boolean = false): Promise<Hooks.Task> {
+		const args = await schema.registerScheduledSubTaskInput.parseAsync(input);
+		const parentTask = await this.getTask(
+			{
+				id: args.id,
+				namespace: args.namespace
+			},
+			true
+		);
+
+		if (!parentTask) {
+			throw new TaskException('Parent task not found');
 		}
 
-		let [id, namespace] = [args.id, args.namespace];
-		let type: 'DELAY' | 'DELAY-DEBOUNCE' = 'DELAY';
+		if (!bypassChecks) {
+			if (parentTask.status === 'SUSPENDED') {
+				throw new TaskException('Parent task is suspended');
+			}
 
-		if (args.delayDebounce) {
-			id = _.compact([args.id, args.delayDebounceId]).join('#');
-			namespace = `${args.namespace}#DELAY-DEBOUNCE`;
-			type = 'DELAY-DEBOUNCE';
-		} else {
-			id = [args.id, _.now()].join('#');
-			namespace = `${args.namespace}#DELAY`;
-			type = 'DELAY';
+			if (parentTask.type !== 'PRIMARY' && parentTask.type !== 'FORK') {
+				throw new TaskException('Parent task must be a primary or fork task');
+			}
+
+			if (parentTask.repeatMax > 0 && parentTask.totalExecutions >= parentTask.repeatMax) {
+				throw new TaskException('Parent task has reached the repeat max by totalExecutions');
+			}
 		}
 
-		const scheduledDate = this.calculateNextSchedule(new Date().toISOString(), {
+		const date = new Date();
+		const scheduledDate = this.calculateNextSchedule(date.toISOString(), {
 			unit: args.delayUnit,
 			value: args.delayValue
 		});
 
-		return this.db.tasks.put<Hooks.Task>(
-			taskShape({
-				...args,
-				__namespace__manualEventPattern: '-',
-				firstScheduledDate: scheduledDate,
-				parentId: parentTask.id,
-				parentNamespace: parentTask.namespace,
-				id,
-				manualEventPattern: '-',
-				namespace,
-				scheduledDate,
-				type
-			}),
-			{ overwrite: true }
-		);
+		// update existent debounced task
+		if (args.delayDebounce) {
+			const currentTask = await this.getTask(
+				{
+					id: args.id,
+					namespace: `${args.namespace}#SUBTASK-DELAY-DEBOUNCE`
+				},
+				true
+			);
+
+			if (currentTask) {
+				try {
+					// check if parent task is still active and has not reached the repeat max
+					// then update debounced task
+					await this.db.tasks.transaction({
+						TransactItems: [
+							{
+								ConditionCheck: {
+									ConditionExpression: [
+										'#status <> :suspended',
+										'(#type = :primary OR #type = :fork)',
+										'(#repeatMax = :zero OR #totalExecutions < #repeatMax)'
+									].join(' AND '),
+									ExpressionAttributeNames: {
+										'#repeatMax': 'repeatMax',
+										'#status': 'status',
+										'#totalExecutions': 'totalExecutions',
+										'#type': 'type'
+									},
+									ExpressionAttributeValues: {
+										':fork': 'FORK',
+										':primary': 'PRIMARY',
+										':suspended': 'SUSPENDED',
+										':zero': 0
+									},
+									Key: {
+										namespace: parentTask.namespace,
+										id: parentTask.id
+									},
+									TableName: this.db.tasks.table
+								}
+							},
+							{
+								Update: {
+									ConditionExpression: 'attribute_exists(#namespace)',
+									ExpressionAttributeNames: {
+										'#namespace': 'namespace',
+										'#scheduledDate': 'scheduledDate',
+										'#status': 'status',
+										'#ts': '__ts',
+										'#ttl': 'ttl',
+										'#updatedAt': '__updatedAt'
+									},
+									ExpressionAttributeValues: {
+										':active': 'ACTIVE',
+										':scheduledDate': currentTask.scheduledDate,
+										':ts': date.getTime(),
+										':ttl': Math.floor((new Date(scheduledDate).getTime() + SUBTASK_TTL_IN_MS) / 1000),
+										':updatedAt': date.toISOString()
+									},
+									Key: {
+										id: currentTask.id,
+										namespace: currentTask.namespace
+									},
+									TableName: this.db.tasks.table,
+									UpdateExpression: `SET ${[
+										'#scheduledDate = :scheduledDate',
+										'#status = :active',
+										'#ts = :ts',
+										'#ttl = :ttl',
+										'#updatedAt = :updatedAt'
+									].join(', ')}`
+								}
+							}
+						]
+					});
+
+					return (await this.getTask(
+						{
+							id: currentTask.id,
+							namespace: currentTask.namespace
+						},
+						true
+					))!;
+				} catch (err) {
+					if (err instanceof TransactionCanceledException) {
+						if (err.CancellationReasons?.[0].Code === 'ConditionalCheckFailed') {
+							throw new TaskException('Parent task is not in a valid state');
+						}
+
+						if (err.CancellationReasons?.[1].Code === 'ConditionalCheckFailed') {
+							throw new TaskException('Debounced task not exists');
+						}
+					}
+
+					throw err;
+				}
+			}
+		}
+
+		if (!bypassChecks) {
+			// check if parent has capacity to register new subtask
+			if (parentTask.repeatMax > 0 && parentTask.totalExecutions + parentTask.totalSubTasks >= parentTask.repeatMax) {
+				throw new TaskException('Parent task has reached the repeat max by totalSubTasks');
+			}
+		}
+
+		let [id, namespace] = [args.id, args.namespace];
+		let type: 'SUBTASK-DELAY' | 'SUBTASK-DELAY-DEBOUNCE' = 'SUBTASK-DELAY';
+
+		if (args.delayDebounce) {
+			namespace = `${args.namespace}#SUBTASK-DELAY-DEBOUNCE`;
+			type = 'SUBTASK-DELAY-DEBOUNCE';
+		} else {
+			id = [args.id, _.now()].join('#');
+			namespace = `${args.namespace}#SUBTASK-DELAY`;
+			type = 'SUBTASK-DELAY';
+		}
+
+		try {
+			// check if parent task has capacity to register new subtask,
+			// then register new subtask
+			await this.db.tasks.transaction({
+				TransactItems: [
+					{
+						Update: {
+							ConditionExpression: [
+								'#status <> :suspended',
+								'(#type = :primary OR #type = :fork)',
+								'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
+								'(#repeatMax = :zero OR #totalSubTasks < #repeatMax)'
+							].join(' AND '),
+							ExpressionAttributeNames: {
+								'#ts': '__ts',
+								'#updatedAt': '__updatedAt',
+								'#repeatMax': 'repeatMax',
+								'#status': 'status',
+								'#totalExecutions': 'totalExecutions',
+								'#totalSubTasks': 'totalSubTasks',
+								'#type': 'type'
+							},
+							ExpressionAttributeValues: {
+								':fork': 'FORK',
+								':one': 1,
+								':primary': 'PRIMARY',
+								':suspended': 'SUSPENDED',
+								':ts': date.getTime(),
+								':updatedAt': date.toISOString(),
+								':zero': 0
+							},
+							Key: {
+								namespace: parentTask.namespace,
+								id: parentTask.id
+							},
+							TableName: this.db.tasks.table,
+							UpdateExpression: 'ADD #totalSubTasks :one SET #ts = :ts, #updatedAt = :updatedAt'
+						}
+					},
+					{
+						Put: {
+							ConditionExpression: 'attribute_not_exists(#namespace)',
+							ExpressionAttributeNames: {
+								'#namespace': 'namespace'
+							},
+							Item: taskShape({
+								__namespace__manualEventPattern: '-',
+								firstScheduledDate: scheduledDate,
+								id,
+								manualEventPattern: '-',
+								namespace,
+								parentId: parentTask.id,
+								parentNamespace: parentTask.namespace,
+								requestBody: args.requestBody,
+								requestHeaders: args.requestHeaders,
+								requestMethod: args.requestMethod,
+								requestUrl: args.requestUrl,
+								scheduledDate,
+								status: 'ACTIVE',
+								ttl: Math.floor((new Date(scheduledDate).getTime() + SUBTASK_TTL_IN_MS) / 1000),
+								type
+							}),
+							TableName: this.db.tasks.table
+						}
+					}
+				]
+			});
+
+			return (await this.getTask(
+				{
+					id,
+					namespace
+				},
+				true
+			))!;
+		} catch (err) {
+			if (err instanceof TransactionCanceledException) {
+				if (err.CancellationReasons?.[0].Code === 'ConditionalCheckFailed') {
+					throw new TaskException('Parent task is not in a valid state');
+				}
+
+				if (err.CancellationReasons?.[1].Code === 'ConditionalCheckFailed') {
+					throw new TaskException('Subtask already exists');
+				}
+			}
+
+			throw err;
+		}
 	}
 
 	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
@@ -827,28 +1202,25 @@ class Hooks {
 		return taskShape(
 			await this.db.tasks.update({
 				attributeNames: {
-					'#noAfter': 'noAfter',
-					'#noBefore': 'noBefore',
 					'#pid': 'pid',
 					'#repeatMax': 'repeatMax',
 					'#status': 'status',
-					'#totalExecutions': 'totalExecutions'
+					'#totalExecutions': 'totalExecutions',
+					'#ts': '__ts'
 				},
 				attributeValues: {
 					':active': 'ACTIVE',
-					':empty': '',
-					':now': args.date.toISOString(),
 					':pid': args.pid,
 					':processing': 'PROCESSING',
+					':ts': args.task.__ts,
 					':zero': 0
 				},
 				// in case of other process already picked the task while it was being processed
 				conditionExpression: [
 					'attribute_not_exists(#pid)',
-					'#status = :active',
 					'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
-					'(#noBefore = :empty OR :now > #noBefore)',
-					'(#noAfter = :empty OR :now < #noAfter)'
+					'#status = :active',
+					'#ts = :ts'
 				].join(' AND '),
 				filter: {
 					item: {
@@ -1020,7 +1392,7 @@ class Hooks {
 	): Promise<{ count: number; items: { id: string; namespace: string }[] }> {
 		let suspended: { id: string; namespace: string }[] = [];
 
-		await this.fetch({
+		await this.fetchTasks({
 			...args,
 			chunkLimit: args.chunkLimit || 100,
 			limit: Infinity,
@@ -1078,13 +1450,19 @@ class Hooks {
 
 			let request: {
 				body: Record<string, any>;
-				delayDebounceId: string;
+				delayDebounce: boolean;
+				delayUnit: Hooks.TimeUnit;
+				delayValue: number;
+				forkId: string;
 				headers: Record<string, any>;
 				method: Webhooks.Request['method'] | '';
 				url: string;
 			} = {
 				body: {},
-				delayDebounceId: '',
+				delayDebounce: false,
+				delayUnit: 'minutes',
+				delayValue: 0,
+				forkId: '',
 				headers: {},
 				method: '',
 				url: ''
@@ -1101,7 +1479,10 @@ class Hooks {
 
 				request = {
 					body: args.requestBody || {},
-					delayDebounceId: args.delayDebounceId || '',
+					delayDebounce: args.delayDebounce || false,
+					delayUnit: args.delayUnit || 'minutes',
+					delayValue: args.delayValue || 0,
+					forkId: args.forkId || '',
 					headers: args.requestHeaders || {},
 					method: args.requestMethod || '',
 					url: args.requestUrl || ''
@@ -1153,8 +1534,11 @@ class Hooks {
 
 					if (this.customWebhookCall) {
 						const res = await this.customWebhookCall({
+							delayDebounce: request.delayDebounce,
+							delayUnit: request.delayUnit,
+							delayValue: request.delayValue,
+							forkId: request.forkId,
 							date,
-							delayDebounceId: request.delayDebounceId,
 							executionType,
 							tasks: items
 						});
@@ -1162,8 +1546,11 @@ class Hooks {
 						result.processed += _.size(res);
 					} else {
 						const res = await this.callWebhook({
+							delayDebounce: request.delayDebounce,
+							delayUnit: request.delayUnit,
+							delayValue: request.delayValue,
+							forkId: request.forkId,
 							date,
-							delayDebounceId: request.delayDebounceId,
 							executionType,
 							tasks: items
 						});
@@ -1213,5 +1600,5 @@ class Hooks {
 	}
 }
 
-export { MINUTE_IN_MS, HOUR_IN_MS, DAY_IN_MS, taskShape };
+export { MINUTE_IN_MS, HOUR_IN_MS, DAY_IN_MS, SUBTASK_TTL_IN_MS, TaskException, taskShape };
 export default Hooks;
