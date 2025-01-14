@@ -10,7 +10,7 @@ A TypeScript library that provides a webhook scheduling system using Amazon Dyna
 
 - ✅ Register webhooks to be triggered at specific times
 - 🔁 Support for recurring webhooks with flexible intervals
-- 📊 Webhook status tracking (ACTIVE, PROCESSING, DONE, FAILED, SUSPENDED)
+- 📊 Webhook status tracking (ACTIVE, PROCESSING, DONE, FAILED, DISABLED)
 - 🔄 Automatic retries with configurable max attempts
 - 🕒 Built-in timestamp management
 - 📝 Comprehensive error tracking
@@ -146,7 +146,7 @@ const { count, items } = await hooks.deleteMany({
 const { count } = await hooks.clear('my-app');
 
 // Suspend a single webhook (prevent it from being triggered)
-const suspendedWebhook = await hooks.suspend({
+const disabledWebhook = await hooks.suspend({
 	namespace: 'my-app',
 	id: 'webhook-id'
 });
@@ -160,7 +160,7 @@ const { count, items } = await hooks.suspendMany({
 });
 
 // Unsuspend a webhook (allow it to be triggered again)
-const unsuspendedWebhook = await hooks.unsuspend({
+const undisabledWebhook = await hooks.unsuspend({
 	namespace: 'my-app',
 	id: 'webhook-id'
 });
@@ -194,7 +194,7 @@ type Task = {
 	// System-managed fields
 	id: string;
 	idPrefix?: string;
-	status: 'ACTIVE' | 'PROCESSING' | 'DONE' | 'FAILED' | 'SUSPENDED';
+	status: 'ACTIVE' | 'PROCESSING' | 'DONE' | 'FAILED' | 'DISABLED';
 	retryLimit: number; // default: 3
 
 	errors: {
