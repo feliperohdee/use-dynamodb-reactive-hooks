@@ -36,11 +36,10 @@ namespace Hooks {
 	export type DeleteInput = z.input<typeof schema.deleteInput>;
 	export type FetchInput = z.input<typeof schema.fetchInput>;
 	export type FetchLogsInput = z.input<typeof schema.fetchLogsInput>;
-	export type GetInput = z.input<typeof schema.getTaskInput>;
+	export type GetTaskInput = z.input<typeof schema.getTaskInput>;
 	export type Log = z.infer<typeof schema.log>;
 	export type QueryActiveTasksInput = z.input<typeof schema.queryActiveTasksInput>;
 	export type RegisterForkTaskInput = z.input<typeof schema.registerForkTaskInput>;
-	export type RegisterScheduledSubTaskInput = z.input<typeof schema.registerScheduledSubTaskInput>;
 	export type SetTaskActiveInput = z.input<typeof schema.setTaskActiveInput>;
 	export type SetTaskErrorInput = z.input<typeof schema.setTaskErrorInput>;
 	export type SetTaskLockInput = z.input<typeof schema.setTaskLockInput>;
@@ -178,17 +177,19 @@ class Hooks {
 		let promiseTasks: (() => Promise<Hooks.Task | null>)[] = [];
 
 		for (const keys of args.keys) {
-			let pid = this.uuid();
-			let task = await this.getTask({
+			const pid = this.uuid();
+			const retrievedTask = await this.getTaskInternal({
 				id: keys.id,
 				namespace: keys.namespace
 			});
 
-			if (!task) {
+			if (!retrievedTask) {
 				continue;
 			}
 
-			if (task.conditionFilter && _.size(args.conditionData) > 0) {
+			let task = taskShape(retrievedTask);
+
+			if (task.conditionFilter && !_.isNil(args.conditionData)) {
 				const match = await UseFilterCriteria.match(args.conditionData, task.conditionFilter);
 
 				if (!match) {
@@ -211,42 +212,67 @@ class Hooks {
 					requestUrl: args.requestUrl || task!.requestUrl
 				};
 
+				let delay = {
+					eventDelayValue: args.eventDelayValue || task!.eventDelayValue,
+					eventDelayUnit: args.eventDelayUnit || task!.eventDelayUnit,
+					eventDelayDebounce: args.eventDelayDebounce || task!.eventDelayDebounce
+				};
+
 				try {
-					if (args.executionType === 'EVENT' && args.forkId) {
+					if (args.forkId) {
+						// forks taks must be only registered in EVENT mode
+						if (args.executionType === 'SCHEDULED') {
+							return null;
+						}
+
 						task = await this.registerForkTask({
 							forkId: args.forkId,
 							parentTask: {
 								...task!,
+								eventDelayDebounce: delay.eventDelayDebounce,
+								eventDelayUnit: delay.eventDelayUnit,
+								eventDelayValue: delay.eventDelayValue,
 								requestBody: request.requestBody,
 								requestHeaders: request.requestHeaders,
 								requestMethod: request.requestMethod,
 								requestUrl: request.requestUrl
 							}
 						});
+
+						type = 'FORK';
+
+						if (args.forkOnly) {
+							return null;
+						}
 					}
 
 					// handle delayed tasks registering subTasks to handle them afterwards
-					if (args.executionType === 'EVENT' && args.delayValue > 0) {
+					if (delay.eventDelayValue > 0) {
+						// subTasks must be registered in EVENT mode
+						if (args.executionType === 'SCHEDULED') {
+							return null;
+						}
+
 						return await this.registerScheduledSubTask({
-							delayDebounce: args.delayDebounce,
-							delayUnit: args.delayUnit,
-							delayValue: args.delayValue,
-							parentTask: {
-								...task!,
-								requestBody: request.requestBody,
-								requestHeaders: request.requestHeaders,
-								requestMethod: request.requestMethod,
-								requestUrl: request.requestUrl
-							}
+							...task!,
+							eventDelayDebounce: delay.eventDelayDebounce,
+							eventDelayUnit: delay.eventDelayUnit,
+							eventDelayValue: delay.eventDelayValue,
+							requestBody: request.requestBody,
+							requestHeaders: request.requestHeaders,
+							requestMethod: request.requestMethod,
+							requestUrl: request.requestUrl
 						});
 					}
 
 					// handle subTasks
-					if (args.executionType === 'SCHEDULED' && type === 'SUBTASK') {
-						// check if parent task is not disabled
-						const parentTask = await this.checkParentTask(task!);
+					if (type === 'SUBTASK') {
+						// subTasks must execute only in SCHEDULED mode
+						if (args.executionType === 'EVENT') {
+							return null;
+						}
 
-						task = parentTask;
+						task = await this.getParentTask(task!);
 					}
 
 					// check if task is able to run just before execution
@@ -307,14 +333,16 @@ class Hooks {
 
 	private async checkExecuteTask(input: Hooks.CheckExecuteTaskInput): Promise<Hooks.Task> {
 		const args = await schema.checkExecuteTaskInput.parseAsync(input);
-		const task = await this.getTask({
+		const retrievedTask = await this.getTaskInternal({
 			id: args.task.id,
 			namespace: args.task.namespace
 		});
 
-		if (!task) {
+		if (!retrievedTask) {
 			throw new TaskException('Task not found');
 		}
+
+		const task = taskShape(retrievedTask);
 
 		if (args.task.__ts !== task.__ts) {
 			throw new TaskException('Task was modified');
@@ -341,31 +369,6 @@ class Hooks {
 		}
 
 		return task;
-	}
-
-	private async checkParentTask(input: Hooks.Task): Promise<Hooks.Task> {
-		if (!input.parentId || !input.parentNamespace) {
-			throw new TaskException('Input is not a subtask');
-		}
-
-		const parentTask = await this.getTask({
-			id: input.parentId,
-			namespace: input.parentNamespace
-		});
-
-		if (!parentTask) {
-			throw new TaskException('Parent task not found');
-		}
-
-		if (parentTask.status === 'DISABLED') {
-			throw new TaskException('Parent task is disabled');
-		}
-
-		if (parentTask.type !== 'PRIMARY' && parentTask.type !== 'FORK') {
-			throw new TaskException('Parent task must be a primary or fork task');
-		}
-
-		return parentTask;
 	}
 
 	private async countSubTasks(namespace: string, id: string): Promise<number> {
@@ -586,7 +589,28 @@ class Hooks {
 		return query(queryOptions);
 	}
 
-	async getTask(input: Hooks.GetInput, consistentRead: boolean = false): Promise<Hooks.Task | null> {
+	private async getParentTask(input: Hooks.Task): Promise<Hooks.Task> {
+		if (!input.parentId || !input.parentNamespace) {
+			throw new TaskException('Input is not a subtask');
+		}
+
+		const parentTask = await this.getTaskInternal({
+			id: input.parentId,
+			namespace: input.parentNamespace
+		});
+
+		if (!parentTask) {
+			throw new TaskException('Parent task not found');
+		}
+
+		if (parentTask.type !== 'PRIMARY' && parentTask.type !== 'FORK') {
+			throw new TaskException('Parent task must be a primary or fork task');
+		}
+
+		return parentTask;
+	}
+
+	async getTask(input: Hooks.GetTaskInput): Promise<Hooks.Task | null> {
 		const args = await schema.getTaskInput.parseAsync(input);
 
 		let [id, namespace] = [args.id, args.namespace];
@@ -602,20 +626,28 @@ class Hooks {
 			prefix = true;
 		}
 
-		if (args.type === 'SUBTASK-DELAY-STANDARD') {
-			id = [id, 'DELAY-STANDARD'].join('#');
+		if (args.type === 'SUBTASK-DELAY') {
+			id = [id, 'DELAY'].join('#');
 			namespace = `${namespace}#SUBTASK`;
 			prefix = true;
 		} else if (args.type === 'SUBTASK-DELAY-DEBOUNCE') {
 			id = [id, 'DELAY-DEBOUNCE'].join('#');
 			namespace = `${namespace}#SUBTASK`;
-			prefix = true;
+			prefix = false;
 		}
 
 		const res = await this.db.tasks.get({
-			consistentRead,
 			item: { namespace, id },
 			prefix
+		});
+
+		return res ? taskShape(res) : null;
+	}
+
+	private async getTaskInternal(input: Hooks.GetTaskInput, consistentRead: boolean = false): Promise<Hooks.Task | null> {
+		const res = await this.db.tasks.get({
+			consistentRead,
+			item: { namespace: input.namespace, id: input.id }
 		});
 
 		return res ? taskShape(res) : null;
@@ -727,9 +759,11 @@ class Hooks {
 					concurrency: args.parentTask.concurrency,
 					conditionFilter: args.parentTask.conditionFilter,
 					description: args.parentTask.description,
+					eventDelayDebounce: args.parentTask.eventDelayDebounce,
+					eventDelayUnit: args.parentTask.eventDelayUnit,
+					eventDelayValue: args.parentTask.eventDelayValue,
 					eventPattern: args.parentTask.eventPattern,
 					firstScheduledDate: args.parentTask.scheduledDate,
-					forkId: args.forkId,
 					id: `${args.parentTask.id}#${args.forkId}`,
 					namespace: `${args.parentTask.namespace}#FORK`,
 					namespace__eventPattern: args.parentTask.namespace__eventPattern,
@@ -760,49 +794,49 @@ class Hooks {
 		}
 	}
 
-	private async registerScheduledSubTask(input: Hooks.RegisterScheduledSubTaskInput): Promise<Hooks.Task> {
-		const args = await schema.registerScheduledSubTaskInput.parseAsync(input);
+	private async registerScheduledSubTask(input: Hooks.Task): Promise<Hooks.Task> {
+		const args = await schema.task.parseAsync(input);
 
-		if (args.parentTask.status === 'DISABLED') {
+		if (args.status === 'DISABLED') {
 			throw new TaskException('Parent task is disabled');
 		}
 
-		if (args.parentTask.type !== 'PRIMARY' && args.parentTask.type !== 'FORK') {
+		if (args.type !== 'PRIMARY' && args.type !== 'FORK') {
 			throw new TaskException('Parent task must be a primary or fork task');
 		}
 
-		if (args.parentTask.repeatMax > 0 && args.parentTask.totalExecutions >= args.parentTask.repeatMax) {
+		if (args.repeatMax > 0 && args.totalExecutions >= args.repeatMax) {
 			throw new TaskException('Parent task has reached the repeat max by totalExecutions');
 		}
 
 		const date = new Date();
 		const scheduledDate = this.calculateNextSchedule(date.toISOString(), {
-			unit: args.delayUnit,
-			value: args.delayValue
+			unit: args.eventDelayUnit,
+			value: args.eventDelayValue
 		});
 
 		let currentTask: Hooks.Task | null = null;
 
 		// update existent debounced task
-		if (args.delayDebounce) {
-			currentTask = await this.getTask({
-				id: [args.parentTask.id, 'DELAY-DEBOUNCE'].join('#'),
-				namespace: `${args.parentTask.namespace}#SUBTASK`
+		if (args.eventDelayDebounce) {
+			currentTask = await this.getTaskInternal({
+				id: [args.id, 'DELAY-DEBOUNCE'].join('#'),
+				namespace: `${args.namespace}#SUBTASK`
 			});
 		}
 
 		if (!currentTask) {
-			const totalSubTasks = await this.countSubTasks(args.parentTask.namespace, args.parentTask.id);
+			const totalSubTasks = await this.countSubTasks(args.namespace, args.id);
 
 			// check if parent has capacity to register new subtask
-			if (args.parentTask.repeatMax > 0 && args.parentTask.totalExecutions + totalSubTasks >= args.parentTask.repeatMax) {
+			if (args.repeatMax > 0 && args.totalExecutions + totalSubTasks >= args.repeatMax) {
 				throw new TaskException('Parent task has reached the repeat max by totalSubTasks');
 			}
 		}
 
-		let [id, namespace] = [args.parentTask.id, args.parentTask.namespace];
+		let [id, namespace] = [args.id, args.namespace];
 
-		if (args.delayDebounce) {
+		if (args.eventDelayDebounce) {
 			id = [id, 'DELAY-DEBOUNCE'].join('#');
 			namespace = `${namespace}#SUBTASK`;
 		} else {
@@ -813,16 +847,15 @@ class Hooks {
 		const newTask = taskShape({
 			eventPattern: '-',
 			firstScheduledDate: scheduledDate,
-			forkId: args.parentTask.forkId,
 			id,
 			namespace,
 			namespace__eventPattern: '-',
-			parentId: args.parentTask.id,
-			parentNamespace: args.parentTask.namespace,
-			requestBody: args.parentTask.requestBody,
-			requestHeaders: args.parentTask.requestHeaders,
-			requestMethod: args.parentTask.requestMethod,
-			requestUrl: args.parentTask.requestUrl,
+			parentId: args.id,
+			parentNamespace: args.namespace,
+			requestBody: args.requestBody,
+			requestHeaders: args.requestHeaders,
+			requestMethod: args.requestMethod,
+			requestUrl: args.requestUrl,
 			scheduledDate,
 			status: 'ACTIVE',
 			ttl: Math.floor((new Date(scheduledDate).getTime() + SUBTASK_TTL_IN_MS) / 1000),
@@ -856,7 +889,7 @@ class Hooks {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace__eventPattern: args.eventPattern ? `${args.namespace}#${args.eventPattern}` : '-',
 				totalErrors: 0,
@@ -872,7 +905,7 @@ class Hooks {
 
 	async setTaskActive(input: Hooks.SetTaskActiveInput): Promise<Hooks.Task | null> {
 		const args = await schema.setTaskActiveInput.parseAsync(input);
-		const task = await this.getTask({
+		const task = await this.getTaskInternal({
 			id: args.id,
 			namespace: args.namespace
 		});
@@ -951,7 +984,7 @@ class Hooks {
 			})
 		]);
 
-		return (await this.getTask(
+		return (await this.getTaskInternal(
 			{
 				id: task.id,
 				namespace: task.namespace
@@ -961,261 +994,285 @@ class Hooks {
 	}
 
 	private async setTaskError(input: Hooks.SetTaskErrorInput): Promise<Hooks.Task> {
-		const args = await schema.setTaskErrorInput.parseAsync(input);
-		const date = new Date();
-		const httpError = HttpError.wrap(args.error);
-		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
-			attributeNames: {
-				'#lastError': 'lastError',
-				'#lastErrorDate': 'lastErrorDate',
-				'#lastErrorExecutionType': 'lastErrorExecutionType',
-				'#pid': 'pid',
-				'#totalErrors': 'totalErrors'
-			},
-			attributeValues: {
-				':empty': '',
-				':error': httpError.message,
-				':executionType': args.executionType,
-				':now': date.toISOString(),
-				':one': 1
-			},
-			filter: {
-				item: {
-					id: args.task.id,
-					namespace: args.task.namespace
-				}
-			}
-		};
-
-		// concurrency is disabled by default (exclusive execution)
-		if (!args.task.concurrency) {
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#pid': 'pid',
-				'#status': 'status'
-			};
-
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':pid': args.pid,
-				':processing': 'PROCESSING'
-			};
-
-			updateOptions.conditionExpression = '#status = :processing AND #pid = :pid';
-		}
-
-		updateOptions.updateExpression = [
-			`ADD ${['#totalErrors :one'].join(', ')}`,
-			`SET ${['#lastErrorExecutionType = :executionType', '#lastError = :error', '#lastErrorDate = :now', '#pid = :empty'].join(', ')}`
-		].join(' ');
-
-		if (args.task.firstErrorDate === '') {
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#firstErrorDate': 'firstErrorDate'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #firstErrorDate = :now');
-		}
-
-		// set MAX-ERRORS-REACHED status if max errors reached
-		const nextErrorsCount = args.task.totalErrors + 1;
-
-		if (this.maxErrors > 0 && nextErrorsCount >= this.maxErrors) {
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#status': 'status'
-			};
-
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':maxErrorsReached': 'MAX-ERRORS-REACHED'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :maxErrorsReached');
-		} else {
-			// keep ACTIVE status if max errors not reached
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#status': 'status'
-			};
-
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':active': 'ACTIVE'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :active');
-		}
-
-		return taskShape(await this.db.tasks.update(updateOptions));
-	}
-
-	private async setTaskLock(input: Hooks.SetTaskLockInput) {
-		const args = await schema.setTaskLockInput.parseAsync(input);
-
-		return taskShape(
-			await this.db.tasks.update({
+		try {
+			const args = await schema.setTaskErrorInput.parseAsync(input);
+			const date = new Date();
+			const httpError = HttpError.wrap(args.error);
+			const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
 				attributeNames: {
+					'#lastError': 'lastError',
+					'#lastErrorDate': 'lastErrorDate',
+					'#lastErrorExecutionType': 'lastErrorExecutionType',
 					'#pid': 'pid',
-					'#repeatMax': 'repeatMax',
-					'#status': 'status',
-					'#totalExecutions': 'totalExecutions',
-					'#ts': '__ts'
+					'#totalErrors': 'totalErrors'
 				},
 				attributeValues: {
-					':active': 'ACTIVE',
 					':empty': '',
-					':pid': args.pid,
-					':processing': 'PROCESSING',
-					':ts': args.task.__ts,
-					':zero': 0
+					':error': httpError.message,
+					':executionType': args.executionType,
+					':now': date.toISOString(),
+					':one': 1
 				},
-				// in case of other process already picked the task while it was being processed
-				conditionExpression: [
-					'#pid = :empty',
-					'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
-					'#status = :active',
-					'#ts = :ts'
-				].join(' AND '),
 				filter: {
 					item: {
 						id: args.task.id,
 						namespace: args.task.namespace
 					}
-				},
-				updateExpression: 'SET #status = :processing, #pid = :pid'
-			})
-		);
+				}
+			};
+
+			// concurrency is disabled by default (exclusive execution)
+			if (!args.task.concurrency) {
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#pid': 'pid',
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':pid': args.pid,
+					':processing': 'PROCESSING'
+				};
+
+				updateOptions.conditionExpression = '#status = :processing AND #pid = :pid';
+			}
+
+			updateOptions.updateExpression = [
+				`ADD ${['#totalErrors :one'].join(', ')}`,
+				`SET ${['#lastErrorExecutionType = :executionType', '#lastError = :error', '#lastErrorDate = :now', '#pid = :empty'].join(', ')}`
+			].join(' ');
+
+			if (args.task.firstErrorDate === '') {
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#firstErrorDate': 'firstErrorDate'
+				};
+
+				updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #firstErrorDate = :now');
+			}
+
+			// set MAX-ERRORS-REACHED status if max errors reached
+			const nextErrorsCount = args.task.totalErrors + 1;
+
+			if (this.maxErrors > 0 && nextErrorsCount >= this.maxErrors) {
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':maxErrorsReached': 'MAX-ERRORS-REACHED'
+				};
+
+				updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :maxErrorsReached');
+			} else {
+				// keep ACTIVE status if max errors not reached
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':active': 'ACTIVE'
+				};
+
+				updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :active');
+			}
+
+			return taskShape(await this.db.tasks.update(updateOptions));
+		} catch (err) {
+			if (err instanceof ConditionalCheckFailedException) {
+				throw new TaskException('Task is not in a valid state');
+			}
+
+			throw err;
+		}
+	}
+
+	private async setTaskLock(input: Hooks.SetTaskLockInput) {
+		try {
+			const args = await schema.setTaskLockInput.parseAsync(input);
+
+			return taskShape(
+				await this.db.tasks.update({
+					attributeNames: {
+						'#pid': 'pid',
+						'#repeatMax': 'repeatMax',
+						'#status': 'status',
+						'#totalExecutions': 'totalExecutions',
+						'#ts': '__ts'
+					},
+					attributeValues: {
+						':active': 'ACTIVE',
+						':empty': '',
+						':pid': args.pid,
+						':processing': 'PROCESSING',
+						':ts': args.task.__ts,
+						':zero': 0
+					},
+					// in case of other process already picked the task while it was being processed
+					conditionExpression: [
+						'#pid = :empty',
+						'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
+						'#status = :active',
+						'#ts = :ts'
+					].join(' AND '),
+					filter: {
+						item: {
+							id: args.task.id,
+							namespace: args.task.namespace
+						}
+					},
+					updateExpression: 'SET #status = :processing, #pid = :pid'
+				})
+			);
+		} catch (err) {
+			if (err instanceof ConditionalCheckFailedException) {
+				throw new TaskException('Task is not in a valid state');
+			}
+
+			throw err;
+		}
 	}
 
 	private async setTaskSuccess(input: Hooks.SetTaskSuccessInput) {
-		const args = await schema.setTaskSuccessInput.parseAsync(input);
-		const date = new Date();
-		const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
-			attributeNames: {
-				'#lastExecutionDate': 'lastExecutionDate',
-				'#lastExecutionType': 'lastExecutionType',
-				'#lastResponseBody': 'lastResponseBody',
-				'#lastResponseHeaders': 'lastResponseHeaders',
-				'#lastResponseStatus': 'lastResponseStatus',
-				'#pid': 'pid',
-				'#totalExecutions': 'totalExecutions',
-				'#totalSuccessfulOrFailed': args.log.responseOk ? 'totalSuccessfulExecutions' : 'totalFailedExecutions'
-			},
-			attributeValues: {
-				':empty': '',
-				':executionType': args.executionType,
-				':now': date.toISOString(),
-				':one': 1,
-				':responseBody': args.log.responseBody,
-				':responseHeaders': args.log.responseHeaders,
-				':responseStatus': args.log.responseStatus
-			},
-			filter: {
-				item: {
-					id: args.task.id,
-					namespace: args.task.namespace
+		try {
+			const args = await schema.setTaskSuccessInput.parseAsync(input);
+			const date = new Date();
+			const updateOptions: Dynamodb.UpdateOptions<Hooks.Task> = {
+				attributeNames: {
+					'#lastExecutionDate': 'lastExecutionDate',
+					'#lastExecutionType': 'lastExecutionType',
+					'#lastResponseBody': 'lastResponseBody',
+					'#lastResponseHeaders': 'lastResponseHeaders',
+					'#lastResponseStatus': 'lastResponseStatus',
+					'#pid': 'pid',
+					'#totalExecutions': 'totalExecutions',
+					'#totalSuccessfulOrFailed': args.log.responseOk ? 'totalSuccessfulExecutions' : 'totalFailedExecutions'
+				},
+				attributeValues: {
+					':empty': '',
+					':executionType': args.executionType,
+					':now': date.toISOString(),
+					':one': 1,
+					':responseBody': args.log.responseBody,
+					':responseHeaders': args.log.responseHeaders,
+					':responseStatus': args.log.responseStatus
+				},
+				filter: {
+					item: {
+						id: args.task.id,
+						namespace: args.task.namespace
+					}
 				}
+			};
+
+			updateOptions.updateExpression = [
+				`ADD ${['#totalExecutions :one', '#totalSuccessfulOrFailed :one'].join(', ')}`,
+				`SET ${[
+					'#lastExecutionDate = :now',
+					'#lastExecutionType = :executionType',
+					'#lastResponseBody = :responseBody',
+					'#lastResponseHeaders = :responseHeaders',
+					'#lastResponseStatus = :responseStatus',
+					'#pid = :empty'
+				].join(', ')}`
+			].join(' ');
+
+			// concurrency is disabled by default (exclusive execution)
+			if (!args.task.concurrency) {
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#pid': 'pid',
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':pid': args.pid,
+					':processing': 'PROCESSING'
+				};
+
+				updateOptions.conditionExpression = '#status = :processing AND #pid = :pid';
 			}
-		};
 
-		updateOptions.updateExpression = [
-			`ADD ${['#totalExecutions :one', '#totalSuccessfulOrFailed :one'].join(', ')}`,
-			`SET ${[
-				'#lastExecutionDate = :now',
-				'#lastExecutionType = :executionType',
-				'#lastResponseBody = :responseBody',
-				'#lastResponseHeaders = :responseHeaders',
-				'#lastResponseStatus = :responseStatus',
-				'#pid = :empty'
-			].join(', ')}`
-		].join(' ');
+			if (args.task.firstExecutionDate === '') {
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#firstExecutionDate': 'firstExecutionDate'
+				};
 
-		// concurrency is disabled by default (exclusive execution)
-		if (!args.task.concurrency) {
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#pid': 'pid',
-				'#status': 'status'
-			};
+				updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #firstExecutionDate = :now');
+			}
 
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':pid': args.pid,
-				':processing': 'PROCESSING'
-			};
+			const nextExecutionCount = args.task.totalExecutions + 1;
+			const repeat = args.task.repeatMax === 0 || nextExecutionCount < args.task.repeatMax;
 
-			updateOptions.conditionExpression = '#status = :processing AND #pid = :pid';
+			if (
+				(args.executionType === 'SCHEDULED' || (args.executionType === 'EVENT' && args.task.rescheduleOnEvent)) &&
+				repeat &&
+				args.task.repeatInterval > 0 &&
+				args.task.scheduledDate
+			) {
+				// keep ACTIVE status and reschedule if can repeat and have scheduled date
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#scheduledDate': 'scheduledDate',
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':scheduledDate': this.calculateNextSchedule(args.task.scheduledDate, {
+						unit: args.task.repeatUnit,
+						value: args.task.repeatInterval
+					}),
+					':active': 'ACTIVE'
+				};
+
+				updateOptions.updateExpression = concatUpdateExpression(
+					updateOptions.updateExpression || '',
+					'SET #scheduledDate = :scheduledDate, #status = :active'
+				);
+			} else if (repeat) {
+				// keep ACTIVE status if can repeat
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':active': 'ACTIVE'
+				};
+
+				updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :active');
+			} else {
+				// set DONE status if can't repeat
+				updateOptions.attributeNames = {
+					...updateOptions.attributeNames,
+					'#status': 'status'
+				};
+
+				updateOptions.attributeValues = {
+					...updateOptions.attributeValues,
+					':maxRepeatReached': 'MAX-REPEAT-REACHED'
+				};
+
+				updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :maxRepeatReached');
+			}
+
+			return taskShape(await this.db.tasks.update(updateOptions));
+		} catch (err) {
+			if (err instanceof ConditionalCheckFailedException) {
+				throw new TaskException('Task is not in a valid state');
+			}
+
+			throw err;
 		}
-
-		if (args.task.firstExecutionDate === '') {
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#firstExecutionDate': 'firstExecutionDate'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #firstExecutionDate = :now');
-		}
-
-		const nextExecutionCount = args.task.totalExecutions + 1;
-		const repeat = args.task.repeatMax === 0 || nextExecutionCount < args.task.repeatMax;
-
-		if (
-			(args.executionType === 'SCHEDULED' || (args.executionType === 'EVENT' && args.task.rescheduleOnEvent)) &&
-			repeat &&
-			args.task.repeatInterval > 0 &&
-			args.task.scheduledDate
-		) {
-			// keep ACTIVE status and reschedule if can repeat and have scheduled date
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#scheduledDate': 'scheduledDate',
-				'#status': 'status'
-			};
-
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':scheduledDate': this.calculateNextSchedule(args.task.scheduledDate, {
-					unit: args.task.repeatUnit,
-					value: args.task.repeatInterval
-				}),
-				':active': 'ACTIVE'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(
-				updateOptions.updateExpression || '',
-				'SET #scheduledDate = :scheduledDate, #status = :active'
-			);
-		} else if (repeat) {
-			// keep ACTIVE status if can repeat
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#status': 'status'
-			};
-
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':active': 'ACTIVE'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :active');
-		} else {
-			// set DONE status if can't repeat
-			updateOptions.attributeNames = {
-				...updateOptions.attributeNames,
-				'#status': 'status'
-			};
-
-			updateOptions.attributeValues = {
-				...updateOptions.attributeValues,
-				':maxRepeatReached': 'MAX-REPEAT-REACHED'
-			};
-
-			updateOptions.updateExpression = concatUpdateExpression(updateOptions.updateExpression || '', 'SET #status = :maxRepeatReached');
-		}
-
-		return taskShape(await this.db.tasks.update(updateOptions));
 	}
 
 	async trigger(input?: Hooks.TriggerInput): Promise<{ processed: number; errors: number }> {
@@ -1249,18 +1306,19 @@ class Hooks {
 					...queryActiveTasksOptions,
 					onChunk: async ({ items }) => {
 						const callWebhookInput: Hooks.CallWebhookInput = {
-							conditionData: args.conditionData || {},
-							delayDebounce: args.delayDebounce || false,
-							delayUnit: args.delayUnit || 'minutes',
-							delayValue: args.delayValue || 0,
-							forkId: args.forkId || '',
+							conditionData: args.conditionData || null,
+							eventDelayDebounce: args.eventDelayDebounce || null,
+							eventDelayUnit: args.eventDelayUnit || null,
+							eventDelayValue: args.eventDelayValue || null,
+							forkId: args.forkId || null,
+							forkOnly: args.forkOnly || null,
 							date,
 							executionType: 'EVENT',
 							keys: items,
-							requestBody: args.requestBody,
-							requestHeaders: args.requestHeaders,
-							requestMethod: args.requestMethod,
-							requestUrl: args.requestUrl
+							requestBody: args.requestBody || null,
+							requestHeaders: args.requestHeaders || null,
+							requestMethod: args.requestMethod || null,
+							requestUrl: args.requestUrl || null
 						};
 
 						if (this.customWebhookCall) {
@@ -1289,18 +1347,19 @@ class Hooks {
 				...queryActiveTasksOptions,
 				onChunk: async ({ items }) => {
 					const callWebhookInput: Hooks.CallWebhookInput = {
-						conditionData: {},
-						delayDebounce: false,
-						delayUnit: 'minutes',
-						delayValue: 0,
-						forkId: '',
+						conditionData: null,
+						eventDelayDebounce: null,
+						eventDelayUnit: null,
+						eventDelayValue: null,
+						forkId: null,
+						forkOnly: null,
 						date,
 						executionType: 'SCHEDULED',
 						keys: items,
 						requestBody: null,
 						requestHeaders: null,
-						requestMethod: 'GET',
-						requestUrl: ''
+						requestMethod: null,
+						requestUrl: null
 					};
 
 					if (this.customWebhookCall) {

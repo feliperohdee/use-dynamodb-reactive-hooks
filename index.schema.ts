@@ -6,9 +6,9 @@ import z from 'zod';
 const optionalRequestInput = z.object({
 	requestBody: z.record(z.any()).nullable(),
 	requestHeaders: z.record(z.string()).nullable(),
-	requestMethod: Webhooks.schema.request.shape.method.default('GET'),
-	requestUrl: z.union([z.string().url(), z.literal('')])
-});
+	requestMethod: Webhooks.schema.request.shape.method.nullable(),
+	requestUrl: z.string().url().nullable()
+}).partial();
 
 const taskExecutionType = z.enum(['EVENT', 'SCHEDULED']);
 const taskKeys = z.object({ id: z.string(), namespace: z.string() });
@@ -23,11 +23,13 @@ const task = z.object({
 	concurrency: z.boolean(),
 	conditionFilter: UseFilterCriteria.schema.matchInput.nullable(),
 	description: z.string(),
+	eventDelayDebounce: z.boolean(),
+	eventDelayUnit: timeUnit,
+	eventDelayValue: z.number().min(0),
 	eventPattern: z.string(),
 	firstErrorDate: z.union([z.string().datetime(), z.literal('')]),
 	firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
 	firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
-	forkId: z.string(),
 	id: z.string(),
 	lastError: z.string(),
 	lastErrorDate: z.union([z.string().datetime(), z.literal('')]),
@@ -35,7 +37,7 @@ const task = z.object({
 	lastExecutionDate: z.union([z.string().datetime(), z.literal('')]),
 	lastExecutionType: z.union([z.literal(''), taskExecutionType]),
 	lastResponseBody: z.string(),
-	lastResponseHeaders: z.record(z.string()),
+	lastResponseHeaders: z.record(z.string()).nullable(),
 	lastResponseStatus: z.number(),
 	namespace: z.string(),
 	namespace__eventPattern: z.union([z.string(), z.literal('-')]),
@@ -101,7 +103,6 @@ const taskInput = task
 		firstErrorDate: true,
 		firstExecutionDate: true,
 		firstScheduledDate: true,
-		forkId: true,
 		lastError: true,
 		lastErrorDate: true,
 		lastErrorExecutionType: true,
@@ -126,6 +127,9 @@ const taskInput = task
 		concurrency: true,
 		conditionFilter: true,
 		description: true,
+		eventDelayDebounce: true,
+		eventDelayUnit: true,
+		eventDelayValue: true,
 		eventPattern: true,
 		noAfter: true,
 		noBefore: true,
@@ -154,16 +158,17 @@ const taskInput = task
 
 const callWebhookInput = z
 	.object({
-		conditionData: z.record(z.any()),
+		conditionData: z.record(z.any()).nullable(),
 		date: z.date(),
-		delayDebounce: z.boolean(),
-		delayUnit: timeUnit,
-		delayValue: z.number().min(0),
 		executionType: taskExecutionType,
-		forkId: z.string(),
+		eventDelayDebounce: z.boolean().nullable(),
+		eventDelayUnit: timeUnit.nullable(),
+		eventDelayValue: z.number().min(0).nullable(),
+		forkId: z.string().nullable(),
+		forkOnly: z.boolean(),
 		keys: z.array(taskKeys)
 	})
-	.and(optionalRequestInput);
+	.merge(optionalRequestInput);
 
 const checkExecuteTaskInput = z.object({
 	date: z.date(),
@@ -219,7 +224,7 @@ const getTaskInput = z.object({
 	forkId: z.string().optional(),
 	id: z.string(),
 	namespace: z.string(),
-	type: z.enum(['SUBTASK-DELAY-STANDARD', 'SUBTASK-DELAY-DEBOUNCE']).optional()
+	type: z.enum(['SUBTASK-DELAY', 'SUBTASK-DELAY-DEBOUNCE']).optional()
 });
 
 const log = Webhooks.schema.log;
@@ -251,13 +256,6 @@ const queryActiveTasksInput = z.union([
 
 const registerForkTaskInput = z.object({
 	forkId: z.string(),
-	parentTask: task
-});
-
-const registerScheduledSubTaskInput = z.object({
-	delayDebounce: z.boolean(),
-	delayUnit: timeUnit,
-	delayValue: z.number().min(0),
 	parentTask: task
 });
 
@@ -295,26 +293,28 @@ const triggerInput = z.union([
 	z
 		.object({
 			conditionData: z.record(z.any()).optional(),
-			delayDebounce: z.boolean().optional(),
-			delayUnit: timeUnit.optional(),
-			delayValue: z.number().min(0).optional(),
+			eventDelayDebounce: z.boolean().optional(),
+			eventDelayUnit: timeUnit.optional(),
+			eventDelayValue: z.number().min(0).optional(),
 			forkId: z.string().optional(),
+			forkOnly: z.boolean().optional(),
 			id: z.string(),
 			namespace: z.string()
 		})
-		.and(optionalRequestInput),
+		.merge(optionalRequestInput),
 	z
 		.object({
 			conditionData: z.record(z.any()).optional(),
-			delayDebounce: z.boolean().optional(),
-			delayUnit: timeUnit.optional(),
-			delayValue: z.number().min(0).optional(),
+			eventDelayDebounce: z.boolean().optional(),
+			eventDelayUnit: timeUnit.optional(),
+			eventDelayValue: z.number().min(0).optional(),
 			eventPattern: z.string(),
 			eventPatternPrefix: z.boolean().default(false),
 			forkId: z.string().optional(),
+			forkOnly: z.boolean().optional(),
 			namespace: z.string()
 		})
-		.and(optionalRequestInput)
+		.merge(optionalRequestInput)
 ]);
 
 export default {
@@ -327,7 +327,6 @@ export default {
 	log,
 	queryActiveTasksInput,
 	registerForkTaskInput,
-	registerScheduledSubTaskInput,
 	setTaskErrorInput,
 	setTaskLockInput,
 	setTaskSuccessInput,

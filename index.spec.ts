@@ -22,7 +22,7 @@ global.fetch = vi.fn(async url => {
 	};
 });
 
-const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.Task>): Hooks.Task => {
+const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.TaskInput>): Hooks.Task => {
 	return taskShape({
 		namespace: 'spec',
 		repeatInterval: 30,
@@ -36,31 +36,23 @@ const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.Task>
 	});
 };
 
-const createTestSubTaskInput = (
-	options: Pick<Hooks.RegisterScheduledSubTaskInput, 'parentTask'> & Partial<Hooks.RegisterScheduledSubTaskInput>
-): Hooks.RegisterScheduledSubTaskInput => {
-	options = {
-		...options,
-		parentTask: {
-			...options.parentTask,
-			requestBody: {
-				...options.parentTask.requestBody,
-				subTask: 1
-			},
-			requestHeaders: {
-				...options.parentTask.requestHeaders,
-				subTask: '1'
-			},
-			requestMethod: 'POST',
-			requestUrl: 'https://httpbin.org/subtask'
-		}
-	};
-
+const createTestSubTaskInput = (task: Hooks.Task, options?: Partial<Hooks.Task>): Hooks.Task => {
 	return {
-		delayDebounce: false,
-		delayUnit: 'minutes',
-		delayValue: 1,
-		...options
+		...task,
+		eventDelayDebounce: false,
+		eventDelayUnit: 'minutes',
+		eventDelayValue: 1,
+		requestMethod: 'POST',
+		requestUrl: 'https://httpbin.org/subtask',
+		...options,
+		requestBody: {
+			...options?.requestBody,
+			subTask: 1
+		},
+		requestHeaders: {
+			...options?.requestHeaders,
+			subTask: '1'
+		}
 	};
 };
 
@@ -149,7 +141,8 @@ describe('/index.ts', () => {
 		beforeEach(async () => {
 			task = await hooks.registerTask(createTestTask());
 
-			vi.spyOn(hooks, 'getTask');
+			// @ts-expect-error
+			vi.spyOn(hooks, 'getTaskInternal');
 		});
 
 		afterEach(async () => {
@@ -163,7 +156,7 @@ describe('/index.ts', () => {
 				task
 			});
 
-			expect(hooks.getTask).toHaveBeenCalledWith({
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({
 				id: task.id,
 				namespace: 'spec'
 			});
@@ -337,132 +330,27 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('checkParentTask', () => {
+	describe('callWebhook', () => {
 		let task: Hooks.Task;
-		let subTask: Hooks.Task;
 
 		beforeEach(async () => {
-			task = await hooks.registerTask({
-				namespace: 'spec',
-				requestUrl: 'https://httpbin.org/anything'
-			});
-
-			// @ts-expect-error
-			subTask = await hooks.registerScheduledSubTask(
-				createTestSubTaskInput({
-					parentTask: task
+			task = await hooks.registerTask(
+				createTestTask(0, {
+					conditionFilter: {
+						operator: 'EQUALS',
+						path: ['key'],
+						type: 'STRING',
+						value: 'value'
+					}
 				})
 			);
-		});
-
-		afterEach(async () => {
-			await hooks.clearTasks('spec');
-		});
-
-		it('should return parent task', async () => {
-			// @ts-expect-error
-			const res = await hooks.checkParentTask(subTask);
-
-			expect(res).toEqual({
-				...task,
-				__ts: res.__ts,
-				__updatedAt: res.__updatedAt
-			});
-		});
-
-		it('should throw if no parentId neither parentNamespace', async () => {
-			try {
-				// @ts-expect-error
-				await hooks.checkParentTask({
-					...subTask,
-					parentId: '',
-					parentNamespace: ''
-				});
-
-				throw new Error('Expected to throw');
-			} catch (err) {
-				expect(err).toBeInstanceOf(TaskException);
-				expect(err.message).toEqual('Input is not a subtask');
-			}
-		});
-
-		it('should throw if parent task is not found', async () => {
-			try {
-				// @ts-expect-error
-				await hooks.checkParentTask({
-					...subTask,
-					parentNamespace: 'spec',
-					parentId: 'non-existent-id'
-				});
-
-				throw new Error('Expected to throw');
-			} catch (err) {
-				expect(err).toBeInstanceOf(TaskException);
-				expect(err.message).toEqual('Parent task not found');
-			}
-		});
-
-		it('should throw if parent task is disabled', async () => {
-			await hooks.db.tasks.update({
-				attributeNames: { '#status': 'status' },
-				attributeValues: { ':status': 'DISABLED' },
-				filter: {
-					item: { id: task.id, namespace: 'spec' }
-				},
-				updateExpression: 'SET #status = :status'
-			});
-
-			try {
-				// @ts-expect-error
-				await hooks.checkParentTask({
-					...subTask,
-					parentNamespace: 'spec',
-					parentId: task.id
-				});
-
-				throw new Error('Expected to throw');
-			} catch (err) {
-				expect(err).toBeInstanceOf(TaskException);
-				expect(err.message).toEqual('Parent task is disabled');
-			}
-		});
-
-		it('should throw if parent task is not a primary or fork task', async () => {
-			await hooks.db.tasks.update({
-				attributeNames: { '#type': 'type' },
-				attributeValues: { ':type': 'SUBTASK-DELAY' },
-				filter: {
-					item: { id: task.id, namespace: 'spec' }
-				},
-				updateExpression: 'SET #type = :type'
-			});
-
-			try {
-				// @ts-expect-error
-				await hooks.checkParentTask({
-					...subTask,
-					parentNamespace: 'spec',
-					parentId: task.id
-				});
-
-				throw new Error('Expected to throw');
-			} catch (err) {
-				expect(err).toBeInstanceOf(TaskException);
-				expect(err.message).toEqual('Parent task must be a primary or fork task');
-			}
-		});
-	});
-
-	describe.todo('callWebhook', () => {
-		let task: Hooks.Task;
-
-		beforeEach(async () => {
-			task = await hooks.registerTask(createTestTask(0));
 
 			// @ts-expect-error
 			vi.spyOn(hooks, 'checkExecuteTask');
 			// @ts-expect-error
-			vi.spyOn(hooks, 'checkParentTask');
+			vi.spyOn(hooks, 'getParentTask');
+			// @ts-expect-error
+			vi.spyOn(hooks, 'getTaskInternal');
 			// @ts-expect-error
 			vi.spyOn(hooks, 'registerForkTask');
 			// @ts-expect-error
@@ -482,21 +370,29 @@ describe('/index.ts', () => {
 
 		it('should works', async () => {
 			const res = await hooks.callWebhook({
+				conditionData: null,
 				date: new Date(),
-				delayDebounce: false,
-				delayUnit: 'minutes',
-				delayValue: 0,
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
 				executionType: 'EVENT',
-				forkId: '',
-				tasks: [task]
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
 			});
 
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 			// @ts-expect-error
 			expect(hooks.registerForkTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 			// @ts-expect-error
-			expect(hooks.checkParentTask).not.toHaveBeenCalled();
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
 				date: expect.any(Date),
@@ -508,7 +404,11 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: `${task.id}#EVENT#PRIMARY`,
+				metadata: {
+					executionType: 'EVENT',
+					taskId: task.id,
+					taskType: 'PRIMARY'
+				},
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -517,22 +417,25 @@ describe('/index.ts', () => {
 				retryLimit: 3
 			});
 			// @ts-expect-error
-			expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
-				executionType: 'EVENT',
-				log: expect.objectContaining({
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
-				}),
-				pid: expect.any(String),
-				task: {
-					...task,
-					__ts: expect.any(Number),
-					__updatedAt: expect.any(String),
-					status: 'PROCESSING'
-				}
-			});
+			expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+				expect.objectContaining({
+					executionType: 'EVENT',
+					log: expect.objectContaining({
+						requestBody: { a: 1 },
+						requestHeaders: { a: '1' },
+						requestMethod: 'POST',
+						requestUrl: 'https://httpbin.org/anything'
+					}),
+					pid: expect.any(String),
+					task: {
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						pid: expect.any(String),
+						status: 'PROCESSING'
+					}
+				})
+			);
 
 			expect(res).toEqual([
 				{
@@ -552,34 +455,31 @@ describe('/index.ts', () => {
 			]);
 		});
 
-		it('should works with task.idPrefix', async () => {
-			task = taskShape(
-				await hooks.db.tasks.update({
-					attributeNames: { '#idPrefix': 'idPrefix' },
-					attributeValues: { ':idPrefix': 'test' },
-					filter: {
-						item: { id: task.id, namespace: 'spec' }
-					},
-					updateExpression: 'SET #idPrefix = :idPrefix'
-				})
-			);
-
+		it('should works with [matched conditionData, requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
 			const res = await hooks.callWebhook({
+				conditionData: { key: 'value' },
 				date: new Date(),
-				delayDebounce: false,
-				delayUnit: 'minutes',
-				delayValue: 0,
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
 				executionType: 'EVENT',
-				forkId: '',
-				tasks: [task]
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: { b: 2 },
+				requestHeaders: { b: '2' },
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/custom'
 			});
 
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 			// @ts-expect-error
 			expect(hooks.registerForkTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 			// @ts-expect-error
-			expect(hooks.checkParentTask).not.toHaveBeenCalled();
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
 				date: expect.any(Date),
@@ -591,31 +491,38 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: `test#${task.id}#EVENT#PRIMARY`,
+				metadata: {
+					executionType: 'EVENT',
+					taskId: task.id,
+					taskType: 'PRIMARY'
+				},
 				namespace: 'spec',
-				requestBody: { a: 1 },
-				requestHeaders: { a: '1' },
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything',
+				requestBody: { a: 1, b: 2 },
+				requestHeaders: { a: '1', b: '2' },
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/custom',
 				retryLimit: 3
 			});
 			// @ts-expect-error
-			expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
-				executionType: 'EVENT',
-				log: expect.objectContaining({
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
-				}),
-				pid: expect.any(String),
-				task: {
-					...task,
-					__ts: expect.any(Number),
-					__updatedAt: expect.any(String),
-					status: 'PROCESSING'
-				}
-			});
+			expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+				expect.objectContaining({
+					executionType: 'EVENT',
+					log: expect.objectContaining({
+						requestBody: { a: 1, b: 2 },
+						requestHeaders: { a: '1', b: '2' },
+						requestMethod: 'GET',
+						requestUrl: 'https://httpbin.org/custom?a=1&b=2'
+					}),
+					pid: expect.any(String),
+					task: {
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						pid: expect.any(String),
+						status: 'PROCESSING'
+					}
+				})
+			);
 
 			expect(res).toEqual([
 				{
@@ -633,6 +540,42 @@ describe('/index.ts', () => {
 					totalSuccessfulExecutions: 1
 				}
 			]);
+		});
+
+		it('should works with [unmatched conditionData, requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
+			const res = await hooks.callWebhook({
+				conditionData: { key: 'no-value' },
+				date: new Date(),
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
+				executionType: 'EVENT',
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+			// @ts-expect-error
+			expect(hooks.registerForkTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.setTaskLock).not.toHaveBeenCalled();
+			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+			expect(res).toEqual([]);
 		});
 
 		it('should works with task.concurrency = true', async () => {
@@ -648,21 +591,29 @@ describe('/index.ts', () => {
 			);
 
 			const res = await hooks.callWebhook({
+				conditionData: null,
 				date: new Date(),
-				delayDebounce: false,
-				delayUnit: 'minutes',
-				delayValue: 0,
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
 				executionType: 'EVENT',
-				forkId: '',
-				tasks: [task]
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
 			});
 
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 			// @ts-expect-error
 			expect(hooks.registerForkTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 			// @ts-expect-error
-			expect(hooks.checkParentTask).not.toHaveBeenCalled();
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
 				date: expect.any(Date),
@@ -671,7 +622,11 @@ describe('/index.ts', () => {
 			// @ts-expect-error
 			expect(hooks.setTaskLock).not.toHaveBeenCalled();
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: `${task.id}#EVENT#PRIMARY`,
+				metadata: {
+					executionType: 'EVENT',
+					taskId: task.id,
+					taskType: 'PRIMARY'
+				},
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -710,48 +665,110 @@ describe('/index.ts', () => {
 			]);
 		});
 
-		it('should handle ConditionalCheckFailedException', async () => {
-			task = taskShape(
-				await hooks.db.tasks.update({
-					attributeNames: {
-						'#pid': 'pid',
-						'#status': 'status'
-					},
-					attributeValues: {
-						':pid': 'other-pid',
-						':status': 'PROCESSING'
-					},
-					filter: {
-						item: { id: task.id, namespace: 'spec' }
-					},
-					updateExpression: 'SET #pid = :pid, #status = :status'
-				})
-			);
-
+		it('should handle inexistent task', async () => {
 			const res = await hooks.callWebhook({
+				conditionData: null,
 				date: new Date(),
-				delayDebounce: false,
-				delayUnit: 'minutes',
-				delayValue: 0,
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
 				executionType: 'EVENT',
-				forkId: '',
-				tasks: [task]
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: 'inexistent-id', namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
 			});
 
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: 'inexistent-id', namespace: 'spec' });
 			// @ts-expect-error
 			expect(hooks.registerForkTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 			// @ts-expect-error
-			expect(hooks.checkParentTask).not.toHaveBeenCalled();
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.setTaskLock).not.toHaveBeenCalled();
+			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+			expect(res).toEqual([]);
+		});
+
+		it('should handle ConditionalCheckFailedException', async () => {
+			// @ts-expect-error
+			vi.mocked(hooks.setTaskLock).mockRejectedValue(
+				new ConditionalCheckFailedException({
+					message: 'ConditionalCheckFailedException',
+					$metadata: {}
+				})
+			);
+
+			const res = await hooks.callWebhook({
+				conditionData: null,
+				date: new Date(),
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
+				executionType: 'EVENT',
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+			// @ts-expect-error
+			expect(hooks.registerForkTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
 				date: expect.any(Date),
 				task
 			});
 			// @ts-expect-error
-			expect(hooks.setTaskLock).not.toHaveBeenCalledWith();
-			expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+			expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+			// @ts-expect-error
+			expect(hooks.setTaskError).not.toHaveBeenCalled();
+
+			expect(res).toEqual([]);
+		});
+
+		it('should handle TaskException', async () => {
+			// @ts-expect-error
+			vi.mocked(hooks.setTaskLock).mockRejectedValue(new TaskException('Task is not in a valid state'));
+
+			const res = await hooks.callWebhook({
+				conditionData: null,
+				date: new Date(),
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
+				executionType: 'EVENT',
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 			// @ts-expect-error
 			expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
 			// @ts-expect-error
@@ -764,21 +781,29 @@ describe('/index.ts', () => {
 			vi.mocked(hooks.webhooks.trigger).mockRejectedValue(new Error('test'));
 
 			const res = await hooks.callWebhook({
+				conditionData: null,
 				date: new Date(),
-				delayDebounce: false,
-				delayUnit: 'minutes',
-				delayValue: 0,
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
 				executionType: 'EVENT',
-				forkId: '',
-				tasks: [task]
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything'
 			});
 
+			// @ts-expect-error
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 			// @ts-expect-error
 			expect(hooks.registerForkTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 			// @ts-expect-error
-			expect(hooks.checkParentTask).not.toHaveBeenCalled();
+			expect(hooks.getParentTask).not.toHaveBeenCalled();
 			// @ts-expect-error
 			expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
 				date: expect.any(Date),
@@ -790,7 +815,11 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				idPrefix: `${task.id}#EVENT#PRIMARY`,
+				metadata: {
+					executionType: 'EVENT',
+					taskId: task.id,
+					taskType: 'PRIMARY'
+				},
 				namespace: 'spec',
 				requestBody: { a: 1 },
 				requestHeaders: { a: '1' },
@@ -798,7 +827,6 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				retryLimit: 3
 			});
-
 			// @ts-expect-error
 			expect(hooks.setTaskError).toHaveBeenCalledWith({
 				error: new Error('test'),
@@ -808,6 +836,7 @@ describe('/index.ts', () => {
 					...task,
 					__ts: expect.any(Number),
 					__updatedAt: expect.any(String),
+					pid: expect.any(String),
 					status: 'PROCESSING'
 				}
 			});
@@ -829,97 +858,69 @@ describe('/index.ts', () => {
 		describe('register forks', () => {
 			it('should not register if executionType = SCHEDULED', async () => {
 				const res = await hooks.callWebhook({
+					conditionData: null,
 					date: new Date(),
-					delayDebounce: false,
-					delayUnit: 'minutes',
-					delayValue: 0,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
 					executionType: 'SCHEDULED',
 					forkId: 'fork-id',
-					tasks: [task]
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
 				});
 
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 				// @ts-expect-error
 				expect(hooks.registerForkTask).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkParentTask).not.toHaveBeenCalled();
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
-					date: expect.any(Date),
-					task
-				});
+				expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.setTaskLock).toHaveBeenCalledWith({
-					pid: expect.any(String),
-					task
-				});
-				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					idPrefix: `${task.id}#SCHEDULED#PRIMARY`,
-					namespace: 'spec',
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything',
-					retryLimit: 3
-				});
+				expect(hooks.setTaskLock).not.toHaveBeenCalled();
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
-					executionType: 'SCHEDULED',
-					log: expect.objectContaining({
-						requestBody: { a: 1 },
-						requestHeaders: { a: '1' },
-						requestMethod: 'POST',
-						requestUrl: 'https://httpbin.org/anything'
-					}),
-					pid: expect.any(String),
-					task: {
-						...task,
-						__ts: expect.any(Number),
-						__updatedAt: expect.any(String),
-						status: 'PROCESSING'
-					}
-				});
+				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
 
-				expect(res).toEqual([
-					{
-						...task,
-						__ts: expect.any(Number),
-						__updatedAt: expect.any(String),
-						firstExecutionDate: expect.any(String),
-						lastExecutionDate: expect.any(String),
-						lastExecutionType: 'SCHEDULED',
-						lastResponseBody: expect.any(String),
-						lastResponseHeaders: expect.any(Object),
-						lastResponseStatus: 200,
-						scheduledDate: expect.any(String),
-						totalExecutions: 1,
-						totalSuccessfulExecutions: 1
-					}
-				]);
+				expect(res).toEqual([]);
 			});
 
 			it('should register', async () => {
 				const res = await hooks.callWebhook({
+					conditionData: null,
 					date: new Date(),
-					delayDebounce: false,
-					delayUnit: 'minutes',
-					delayValue: 0,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
 					executionType: 'EVENT',
 					forkId: 'fork-id',
-					tasks: [task]
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
 				});
 
 				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
 				expect(hooks.registerForkTask).toHaveBeenCalledWith({
 					forkId: 'fork-id',
-					id: task.id,
-					namespace: 'spec'
+					parentTask: task
 				});
+
 				// @ts-expect-error
 				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkParentTask).not.toHaveBeenCalled();
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
 					date: expect.any(Date),
@@ -928,8 +929,8 @@ describe('/index.ts', () => {
 						__createdAt: expect.any(String),
 						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
-						forkId: 'fork-id',
 						id: `${task.id}#fork-id`,
+						namespace: 'spec#FORK',
 						parentId: task.id,
 						parentNamespace: 'spec',
 						type: 'FORK'
@@ -943,16 +944,20 @@ describe('/index.ts', () => {
 						__createdAt: expect.any(String),
 						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
-						forkId: 'fork-id',
 						id: `${task.id}#fork-id`,
+						namespace: 'spec#FORK',
 						parentId: task.id,
 						parentNamespace: 'spec',
 						type: 'FORK'
 					}
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					idPrefix: `${task.id}#fork-id#EVENT#FORK`,
-					namespace: 'spec',
+					metadata: {
+						executionType: 'EVENT',
+						taskId: `${task.id}#fork-id`,
+						taskType: 'FORK'
+					},
+					namespace: 'spec#FORK',
 					requestBody: { a: 1 },
 					requestHeaders: { a: '1' },
 					requestMethod: 'POST',
@@ -960,7 +965,31 @@ describe('/index.ts', () => {
 					retryLimit: 3
 				});
 				// @ts-expect-error
-				expect(hooks.setTaskSuccess).toHaveBeenCalled();
+				expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+					expect.objectContaining({
+						executionType: 'EVENT',
+						log: expect.objectContaining({
+							requestBody: { a: 1 },
+							requestHeaders: { a: '1' },
+							requestMethod: 'POST',
+							requestUrl: 'https://httpbin.org/anything'
+						}),
+						pid: expect.any(String),
+						task: {
+							...task,
+							__createdAt: expect.any(String),
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							id: `${task.id}#fork-id`,
+							namespace: 'spec#FORK',
+							parentId: task.id,
+							parentNamespace: 'spec',
+							pid: expect.any(String),
+							status: 'PROCESSING',
+							type: 'FORK'
+						}
+					})
+				);
 
 				expect(res).toEqual([
 					{
@@ -969,15 +998,203 @@ describe('/index.ts', () => {
 						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						firstExecutionDate: expect.any(String),
-						forkId: 'fork-id',
 						id: `${task.id}#fork-id`,
 						lastExecutionDate: expect.any(String),
 						lastExecutionType: 'EVENT',
 						lastResponseBody: expect.any(String),
 						lastResponseHeaders: expect.any(Object),
 						lastResponseStatus: 200,
+						namespace: 'spec#FORK',
 						parentId: task.id,
 						parentNamespace: 'spec',
+						scheduledDate: expect.any(String),
+						totalExecutions: 1,
+						totalSuccessfulExecutions: 1,
+						type: 'FORK'
+					}
+				]);
+			});
+
+			it('should register with forkOnly = true', async () => {
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: 'fork-id',
+					forkOnly: true,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).toHaveBeenCalledWith({
+					forkId: 'fork-id',
+					parentTask: task
+				});
+
+				// @ts-expect-error
+				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskLock).not.toHaveBeenCalled();
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+				expect(res).toEqual([]);
+			});
+
+			it('should register with [eventDelayValue, eventDelayUnit, eventDelayDebounce, requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
+					executionType: 'EVENT',
+					forkId: 'fork-id',
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: { b: 2 },
+					requestHeaders: { b: '2' },
+					requestMethod: 'GET',
+					requestUrl: 'https://httpbin.org/custom'
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).toHaveBeenCalledWith({
+					forkId: 'fork-id',
+					parentTask: {
+						...task,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 0,
+						requestBody: { a: 1, b: 2 },
+						requestHeaders: { a: '1', b: '2' },
+						requestMethod: 'GET',
+						requestUrl: 'https://httpbin.org/custom'
+					}
+				});
+
+				// @ts-expect-error
+				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					task: {
+						...task,
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						id: `${task.id}#fork-id`,
+						namespace: 'spec#FORK',
+						parentId: task.id,
+						parentNamespace: 'spec',
+						requestBody: { a: 1, b: 2 },
+						requestHeaders: { a: '1', b: '2' },
+						requestMethod: 'GET',
+						requestUrl: 'https://httpbin.org/custom',
+						type: 'FORK'
+					}
+				});
+				// @ts-expect-error
+				expect(hooks.setTaskLock).toHaveBeenCalledWith({
+					pid: expect.any(String),
+					task: {
+						...task,
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						id: `${task.id}#fork-id`,
+						namespace: 'spec#FORK',
+						parentId: task.id,
+						parentNamespace: 'spec',
+						requestBody: { a: 1, b: 2 },
+						requestHeaders: { a: '1', b: '2' },
+						requestMethod: 'GET',
+						requestUrl: 'https://httpbin.org/custom',
+						type: 'FORK'
+					}
+				});
+				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					metadata: {
+						executionType: 'EVENT',
+						taskId: `${task.id}#fork-id`,
+						taskType: 'FORK'
+					},
+					namespace: 'spec#FORK',
+					requestBody: { a: 1, b: 2 },
+					requestHeaders: { a: '1', b: '2' },
+					requestMethod: 'GET',
+					requestUrl: 'https://httpbin.org/custom',
+					retryLimit: 3
+				});
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+					expect.objectContaining({
+						executionType: 'EVENT',
+						log: expect.objectContaining({
+							requestBody: { a: 1, b: 2 },
+							requestHeaders: { a: '1', b: '2' },
+							requestMethod: 'GET',
+							requestUrl: 'https://httpbin.org/custom?a=1&b=2'
+						}),
+						pid: expect.any(String),
+						task: {
+							...task,
+							__createdAt: expect.any(String),
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							id: `${task.id}#fork-id`,
+							namespace: 'spec#FORK',
+							parentId: task.id,
+							parentNamespace: 'spec',
+							requestBody: { a: 1, b: 2 },
+							requestHeaders: { a: '1', b: '2' },
+							requestMethod: 'GET',
+							requestUrl: 'https://httpbin.org/custom',
+							pid: expect.any(String),
+							status: 'PROCESSING',
+							type: 'FORK'
+						}
+					})
+				);
+
+				expect(res).toEqual([
+					{
+						...task,
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						firstExecutionDate: expect.any(String),
+						id: `${task.id}#fork-id`,
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'EVENT',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						namespace: 'spec#FORK',
+						parentId: task.id,
+						parentNamespace: 'spec',
+						requestBody: { a: 1, b: 2 },
+						requestHeaders: { a: '1', b: '2' },
+						requestMethod: 'GET',
+						requestUrl: 'https://httpbin.org/custom',
 						scheduledDate: expect.any(String),
 						totalExecutions: 1,
 						totalSuccessfulExecutions: 1,
@@ -988,151 +1205,229 @@ describe('/index.ts', () => {
 		});
 
 		describe('register subTasks', () => {
+			beforeEach(async () => {
+				task = await hooks.registerTask(
+					createTestTask(0, {
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
+					})
+				);
+			});
+
 			it('should not register if executionType = SCHEDULED', async () => {
 				const res = await hooks.callWebhook({
+					conditionData: null,
 					date: new Date(),
-					delayDebounce: false,
-					delayUnit: 'minutes',
-					delayValue: 1,
+					eventDelayDebounce: null,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1,
 					executionType: 'SCHEDULED',
-					forkId: '',
-					tasks: [task]
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
 				});
 
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
 				// @ts-expect-error
 				expect(hooks.registerForkTask).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkParentTask).not.toHaveBeenCalled();
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
-					date: expect.any(Date),
-					task
-				});
-				// @ts-expect-error
-				expect(hooks.setTaskLock).toHaveBeenCalledWith({
-					pid: expect.any(String),
-					task
-				});
-				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					idPrefix: `${task.id}#SCHEDULED#PRIMARY`,
-					namespace: 'spec',
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything',
-					retryLimit: 3
-				});
-				// @ts-expect-error
-				expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
-					executionType: 'SCHEDULED',
-					log: expect.objectContaining({
-						requestBody: { a: 1 },
-						requestHeaders: { a: '1' },
-						requestMethod: 'POST',
-						requestUrl: 'https://httpbin.org/anything'
-					}),
-					pid: expect.any(String),
-					task: {
-						...task,
-						__ts: expect.any(Number),
-						__updatedAt: expect.any(String),
-						status: 'PROCESSING'
-					}
-				});
-
-				expect(res).toEqual([
-					{
-						...task,
-						__ts: expect.any(Number),
-						__updatedAt: expect.any(String),
-						firstExecutionDate: expect.any(String),
-						lastExecutionDate: expect.any(String),
-						lastExecutionType: 'SCHEDULED',
-						lastResponseBody: expect.any(String),
-						lastResponseHeaders: expect.any(Object),
-						lastResponseStatus: 200,
-						scheduledDate: expect.any(String),
-						totalExecutions: 1,
-						totalSuccessfulExecutions: 1
-					}
-				]);
-			});
-
-			it('should register delayed task', async () => {
-				const res = await hooks.callWebhook({
-					date: new Date(),
-					delayDebounce: false,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					executionType: 'EVENT',
-					forkId: '',
-					tasks: [task]
-				});
-
-				// @ts-expect-error
-				expect(hooks.registerForkTask).not.toHaveBeenCalled();
-				// @ts-expect-error
-				expect(hooks.registerScheduledSubTask).toHaveBeenCalledWith({
-					delayDebounce: false,
-					id: task.id,
-					namespace: 'spec',
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything',
-					delayUnit: 'minutes',
-					delayValue: 1
-				});
-				// @ts-expect-error
-				expect(hooks.checkParentTask).not.toHaveBeenCalled();
-				// @ts-expect-error
-				expect(hooks.checkExecuteTask).not.toHaveBeenCalledWith();
+				expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.setTaskLock).not.toHaveBeenCalled();
 				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
 
-				expect(res[0].id).toEqual(expect.stringMatching(`${task.id}#[0-9]`));
-				expect(res[0].namespace).toEqual('spec#SUBTASK-DELAY');
-				expect(res[0].parentId).toEqual(task.id);
-				expect(res[0].parentNamespace).toEqual('spec');
-				expect(res[0].type).toEqual('SUBTASK-DELAY');
+				expect(res).toEqual([]);
+			});
+
+			it('should register', async () => {
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.registerScheduledSubTask).toHaveBeenCalledWith({
+					...task,
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1
+				});
+				// @ts-expect-error
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskLock).not.toHaveBeenCalled();
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+				expect(res).toEqual([
+					{
+						...task,
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						conditionFilter: null,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 0,
+						firstScheduledDate: expect.any(String),
+						id: expect.stringMatching(`${task.id}#DELAY#[0-9]`),
+						namespace: 'spec#SUBTASK',
+						parentId: task.id,
+						parentNamespace: 'spec',
+						repeatInterval: 0,
+						scheduledDate: expect.any(String),
+						ttl: expect.any(Number),
+						type: 'SUBTASK'
+					}
+				]);
+			});
+
+			it('should register with [eventDelayValue, eventDelayUnit, eventDelayDebounce, requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 10,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: { b: 2 },
+					requestHeaders: { b: '2' },
+					requestMethod: 'GET',
+					requestUrl: 'https://httpbin.org/custom'
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.registerScheduledSubTask).toHaveBeenCalledWith({
+					...task,
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 10,
+					requestBody: { a: 1, b: 2 },
+					requestHeaders: { a: '1', b: '2' },
+					requestMethod: 'GET',
+					requestUrl: 'https://httpbin.org/custom'
+				});
+				// @ts-expect-error
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskLock).not.toHaveBeenCalled();
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).not.toHaveBeenCalled();
+
+				expect(res).toEqual([
+					{
+						...task,
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						conditionFilter: null,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 0,
+						firstScheduledDate: expect.any(String),
+						id: `${task.id}#DELAY-DEBOUNCE`,
+						namespace: 'spec#SUBTASK',
+						parentId: task.id,
+						parentNamespace: 'spec',
+						repeatInterval: 0,
+						requestBody: { a: 1, b: 2 },
+						requestHeaders: { a: '1', b: '2' },
+						requestMethod: 'GET',
+						requestUrl: 'https://httpbin.org/custom',
+						scheduledDate: expect.any(String),
+						ttl: expect.any(Number),
+						type: 'SUBTASK'
+					}
+				]);
 			});
 		});
 
-		describe.todo('execute subTasks', () => {
+		describe('execute subTasks', () => {
+			let task: Hooks.Task;
 			let subTask: Hooks.Task;
 
 			beforeEach(async () => {
+				task = await hooks.registerTask(createTestTask());
+
 				// @ts-expect-error
-				subTask = await hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						id: task.id,
-						namespace: 'spec'
-					})
-				);
+				subTask = await hooks.registerScheduledSubTask({
+					...task,
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1
+				});
 
 				// @ts-expect-error
 				vi.mocked(hooks.registerScheduledSubTask).mockClear();
 			});
 
-			it('should not execute if no subTask', async () => {
-				// @ts-expect-error
-				vi.mocked(hooks.checkParentTask).mockResolvedValueOnce(null);
-
+			it('should not execute if executionType = EVENT', async () => {
 				const res = await hooks.callWebhook({
+					conditionData: null,
 					date: new Date(),
-					executionType: 'SCHEDULED',
-					tasks: [subTask]
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: subTask.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
 				});
 
 				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: subTask.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
+				// @ts-expect-error
 				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkParentTask).toHaveBeenCalledWith(subTask);
+				expect(hooks.getParentTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.setTaskLock).not.toHaveBeenCalled();
 				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
@@ -1144,49 +1439,72 @@ describe('/index.ts', () => {
 
 			it('should execute', async () => {
 				const res = await hooks.callWebhook({
+					conditionData: null,
 					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
 					executionType: 'SCHEDULED',
-					tasks: [subTask]
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: subTask.id, namespace: subTask.namespace }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything'
 				});
 
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
 				// @ts-expect-error
 				expect(hooks.registerScheduledSubTask).not.toHaveBeenCalled();
 				// @ts-expect-error
-				expect(hooks.checkParentTask).toHaveBeenCalledWith(subTask);
-
+				expect(hooks.getParentTask).toHaveBeenCalledWith(subTask);
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					task
+				});
 				// @ts-expect-error
 				expect(hooks.setTaskLock).toHaveBeenCalledWith({
-					date: expect.any(Date),
 					pid: expect.any(String),
 					task
 				});
-
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					metadata: {
+						executionType: 'SCHEDULED',
+						taskId: task.id,
+						taskType: 'SUBTASK'
+					},
 					namespace: 'spec',
-					requestBody: subTask.requestBody,
-					requestHeaders: subTask.requestHeaders,
-					requestMethod: subTask.requestMethod,
-					requestUrl: subTask.requestUrl,
+					requestBody: { a: 1 },
+					requestHeaders: { a: '1' },
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything',
 					retryLimit: 3
 				});
-
 				// @ts-expect-error
-				expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
-					executionType: 'SCHEDULED',
-					log: expect.objectContaining({
-						requestBody: subTask.requestBody,
-						requestHeaders: subTask.requestHeaders,
-						requestMethod: subTask.requestMethod,
-						requestUrl: subTask.requestUrl
-					}),
-					pid: expect.any(String),
-					task: {
-						...task,
-						__ts: expect.any(Number),
-						__updatedAt: expect.any(String),
-						status: 'PROCESSING'
-					}
-				});
+				expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+					expect.objectContaining({
+						executionType: 'SCHEDULED',
+						log: expect.objectContaining({
+							requestBody: { a: 1 },
+							requestHeaders: { a: '1' },
+							requestMethod: 'POST',
+							requestUrl: 'https://httpbin.org/anything'
+						}),
+						pid: expect.any(String),
+						task: {
+							...task,
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							pid: expect.any(String),
+							status: 'PROCESSING'
+						}
+					})
+				);
 
 				expect(res).toEqual([
 					{
@@ -1257,33 +1575,23 @@ describe('/index.ts', () => {
 
 			await Promise.all([
 				// @ts-expect-error
+				hooks.registerScheduledSubTask(createTestSubTaskInput(task)),
+				// @ts-expect-error
 				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						parentTask: task
+					createTestSubTaskInput(task, {
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					})
 				),
 				// @ts-expect-error
-				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: task
-					})
-				),
+				hooks.registerScheduledSubTask(createTestSubTaskInput(forkTask)),
 				// @ts-expect-error
 				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						parentTask: forkTask
-					})
-				),
-				// @ts-expect-error
-				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: forkTask
+					createTestSubTaskInput(forkTask, {
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					})
 				)
 			]);
@@ -1334,7 +1642,7 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${task.id}#DELAY`),
+						id: expect.stringMatching(`${task.id}#DELAY#[0-9]`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
@@ -1478,22 +1786,16 @@ describe('/index.ts', () => {
 			subTasks = await Promise.all([
 				// @ts-expect-error
 				hooks.registerForkTask({
-					forkId: 'fork-id',
 					parentTask: tasks[0]
 				}),
 				// @ts-expect-error
-				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						parentTask: tasks[0]
-					})
-				),
+				hooks.registerScheduledSubTask(createTestSubTaskInput(tasks[0])),
 				// @ts-expect-error
 				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: tasks[0]
+					createTestSubTaskInput(tasks[0], {
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					})
 				)
 			]);
@@ -2021,31 +2323,114 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe.todo('getTask', () => {
+	describe('getParentTask', () => {
 		let task: Hooks.Task;
+		let subTask: Hooks.Task;
+
+		beforeEach(async () => {
+			task = await hooks.registerTask({
+				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			// @ts-expect-error
+			subTask = await hooks.registerScheduledSubTask(createTestSubTaskInput(task));
+		});
+
+		afterEach(async () => {
+			await hooks.clearTasks('spec');
+		});
+
+		it('should return parent task', async () => {
+			// @ts-expect-error
+			const res = await hooks.getParentTask(subTask);
+
+			expect(res).toEqual({
+				...task,
+				__ts: res.__ts,
+				__updatedAt: res.__updatedAt
+			});
+		});
+
+		it('should throw if no parentId neither parentNamespace', async () => {
+			try {
+				// @ts-expect-error
+				await hooks.getParentTask({
+					...subTask,
+					parentId: '',
+					parentNamespace: ''
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Input is not a subtask');
+			}
+		});
+
+		it('should throw if parent task is not found', async () => {
+			try {
+				// @ts-expect-error
+				await hooks.getParentTask({
+					...subTask,
+					parentNamespace: 'spec',
+					parentId: 'non-existent-id'
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Parent task not found');
+			}
+		});
+
+		it('should throw if parent task is not a primary or fork task', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: { '#type': 'type' },
+				attributeValues: { ':type': 'SUBTASK-DELAY' },
+				filter: {
+					item: { id: task.id, namespace: 'spec' }
+				},
+				updateExpression: 'SET #type = :type'
+			});
+
+			try {
+				// @ts-expect-error
+				await hooks.getParentTask({
+					...subTask,
+					parentNamespace: 'spec',
+					parentId: task.id
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Parent task must be a primary or fork task');
+			}
+		});
+	});
+
+	describe('getTask', () => {
+		let task: Hooks.Task;
+		let forkTask: Hooks.Task;
 		let subTasks: Hooks.Task[];
 
 		beforeAll(async () => {
 			task = await hooks.registerTask(createTestTask());
+			// @ts-expect-error
+			forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
+				parentTask: task
+			});
 			subTasks = await Promise.all([
 				// @ts-expect-error
-				hooks.registerForkTask({
-					forkId: 'fork-id',
-					parentTask: task
-				}),
+				hooks.registerScheduledSubTask(createTestSubTaskInput(task)),
 				// @ts-expect-error
 				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						parentTask: task
-					})
-				),
-				// @ts-expect-error
-				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: task
+					createTestSubTaskInput(task, {
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					})
 				)
 			]);
@@ -2066,7 +2451,6 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
-				consistentRead: false,
 				item: {
 					id: expect.any(String),
 					namespace: 'spec'
@@ -2077,18 +2461,35 @@ describe('/index.ts', () => {
 			expect(res).toEqual(task);
 		});
 
+		it.only('should get forked task', async () => {
+			const res = await hooks.getTask({
+				forkId: 'fork-id',
+				id: forkTask.parentId,
+				namespace: forkTask.parentNamespace
+			});
+
+			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
+				item: {
+					id: `${forkTask.parentId}#fork-id`,
+					namespace: `${forkTask.parentNamespace}#FORK`
+				},
+				prefix: true
+			});
+
+			expect(res).toEqual(forkTask);
+		});
+
 		it('should get delayed subTask', async () => {
 			const res = await hooks.getTask({
 				id: subTasks[0].parentId,
 				namespace: subTasks[0].parentNamespace,
-				type: 'DELAY'
+				type: 'SUBTASK-DELAY'
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
-				consistentRead: false,
 				item: {
-					id: subTasks[0].parentId,
-					namespace: `${subTasks[0].parentNamespace}#DELAY`
+					id: `${subTasks[0].parentId}#DELAY`,
+					namespace: `${subTasks[0].parentNamespace}#SUBTASK`
 				},
 				prefix: true
 			});
@@ -2100,39 +2501,18 @@ describe('/index.ts', () => {
 			const res = await hooks.getTask({
 				id: subTasks[1].parentId,
 				namespace: subTasks[1].parentNamespace,
-				type: 'DELAY-DEBOUNCE'
+				type: 'SUBTASK-DELAY-DEBOUNCE'
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
-				consistentRead: false,
 				item: {
-					id: subTasks[1].parentId,
-					namespace: `${subTasks[1].parentNamespace}#DELAY-DEBOUNCE`
+					id: `${subTasks[1].parentId}#DELAY-DEBOUNCE`,
+					namespace: `${subTasks[1].parentNamespace}#SUBTASK`
 				},
 				prefix: false
 			});
 
 			expect(res).toEqual(subTasks[1]);
-		});
-
-		it('should return identified debounced subTask', async () => {
-			const res = await hooks.getTask({
-				delayDebounceId: 'debounce-id',
-				id: subTasks[2].parentId,
-				namespace: subTasks[2].parentNamespace,
-				type: 'DELAY-DEBOUNCE'
-			});
-
-			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
-				consistentRead: false,
-				item: {
-					id: `${subTasks[2].parentId}#debounce-id`,
-					namespace: `${subTasks[2].parentNamespace}#DELAY-DEBOUNCE`
-				},
-				prefix: false
-			});
-
-			expect(res).toEqual(subTasks[2]);
 		});
 
 		it('should return null if inexistent', async () => {
@@ -2142,7 +2522,6 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
-				consistentRead: false,
 				item: {
 					id: 'non-existent-id',
 					namespace: 'spec'
@@ -2151,6 +2530,28 @@ describe('/index.ts', () => {
 			});
 
 			expect(res).toBeNull();
+		});
+	});
+
+	describe('getTaskInternal', () => {
+		let task: Hooks.Task;
+
+		beforeEach(async () => {
+			task = await hooks.registerTask(createTestTask());
+		});
+
+		afterEach(async () => {
+			await hooks.clearTasks('spec');
+		});
+
+		it('should get', async () => {
+			// @ts-expect-error
+			const res = await hooks.getTaskInternal({
+				id: task.id,
+				namespace: 'spec'
+			});
+
+			expect(res).toEqual(task);
 		});
 	});
 
@@ -2708,11 +3109,14 @@ describe('/index.ts', () => {
 			task = await hooks.registerTask({
 				conditionFilter: {
 					operator: 'EQUALS',
-					path: ['a'],
+					path: ['key'],
 					type: 'STRING',
 					value: 'value'
 				},
 				description: 'description',
+				eventDelayDebounce: true,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 30,
 				eventPattern: 'event-pattern',
 				namespace: 'spec',
 				noAfter: `${currentYear + 1}-01-01T00:00:00-03:00`,
@@ -2783,16 +3187,18 @@ describe('/index.ts', () => {
 					defaultValue: '',
 					normalize: true,
 					operator: 'EQUALS',
-					path: ['a'],
+					path: ['key'],
 					type: 'STRING',
 					value: 'value'
 				},
 				description: 'description',
+				eventDelayDebounce: true,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 30,
 				eventPattern: 'event-pattern',
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: expect.any(String),
-				forkId: 'fork-id',
 				id: `${task.id}#fork-id`,
 				lastError: '',
 				lastErrorDate: '',
@@ -2800,7 +3206,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec#FORK',
 				namespace__eventPattern: 'spec#event-pattern',
@@ -2838,15 +3244,17 @@ describe('/index.ts', () => {
 					defaultValue: '',
 					normalize: true,
 					operator: 'EQUALS',
-					path: ['a'],
+					path: ['key'],
 					type: 'STRING',
 					value: 'value'
 				},
+				eventDelayDebounce: true,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 30,
 				eventPattern: 'event-pattern',
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`,
-				forkId: 'fork-id',
 				id: `${task.id}#fork-id`,
 				lastError: '',
 				lastErrorDate: '',
@@ -2854,7 +3262,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec#FORK',
 				namespace__eventPattern: 'spec#event-pattern',
@@ -2966,16 +3374,15 @@ describe('/index.ts', () => {
 			it('should create', async () => {
 				// @ts-expect-error
 				const res = await hooks.registerScheduledSubTask({
-					delayDebounce: false,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					parentTask: task
+					...task,
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1
 				});
 
 				expect(hooks.db.tasks.put).toHaveBeenCalledWith(
 					expect.objectContaining({
 						eventPattern: '-',
-						forkId: '',
 						id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
 						namespace__eventPattern: '-',
@@ -3003,11 +3410,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
-					forkId: '',
 					id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
 					lastError: '',
 					lastErrorDate: '',
@@ -3015,7 +3424,7 @@ describe('/index.ts', () => {
 					lastExecutionDate: '',
 					lastExecutionType: '',
 					lastResponseBody: '',
-					lastResponseHeaders: {},
+					lastResponseHeaders: null,
 					lastResponseStatus: 0,
 					namespace: 'spec#SUBTASK',
 					namespace__eventPattern: '-',
@@ -3047,22 +3456,18 @@ describe('/index.ts', () => {
 			it('should create by fork', async () => {
 				// @ts-expect-error
 				const res = await hooks.registerScheduledSubTask({
-					delayDebounce: false,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					parentTask: {
-						...task,
-						forkId: 'fork-id',
-						id: `${task.id}#fork-id`,
-						namespace: 'spec#FORK',
-						type: 'FORK'
-					}
+					...task,
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1,
+					id: `${task.id}#fork-id`,
+					namespace: 'spec#FORK',
+					type: 'FORK'
 				});
 
 				expect(hooks.db.tasks.put).toHaveBeenCalledWith(
 					expect.objectContaining({
 						eventPattern: '-',
-						forkId: 'fork-id',
 						id: expect.stringMatching(`${task.id}#fork-id#DELAY#[0-9]+`),
 						namespace: 'spec#FORK#SUBTASK',
 						namespace__eventPattern: '-',
@@ -3090,11 +3495,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
-					forkId: 'fork-id',
 					id: expect.stringMatching(`${task.id}#fork-id#DELAY#[0-9]+`),
 					lastError: '',
 					lastErrorDate: '',
@@ -3102,7 +3509,7 @@ describe('/index.ts', () => {
 					lastExecutionDate: '',
 					lastExecutionType: '',
 					lastResponseBody: '',
-					lastResponseHeaders: {},
+					lastResponseHeaders: null,
 					lastResponseStatus: 0,
 					namespace: 'spec#FORK#SUBTASK',
 					namespace__eventPattern: '-',
@@ -3135,13 +3542,11 @@ describe('/index.ts', () => {
 				try {
 					// @ts-expect-error
 					await hooks.registerScheduledSubTask({
-						delayDebounce: false,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: {
-							...task,
-							status: 'DISABLED'
-						}
+						...task,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1,
+						status: 'DISABLED'
 					});
 
 					throw new Error('expected to throw');
@@ -3155,13 +3560,11 @@ describe('/index.ts', () => {
 				try {
 					// @ts-expect-error
 					await hooks.registerScheduledSubTask({
-						delayDebounce: false,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: {
-							...task,
-							type: 'SUBTASK'
-						}
+						...task,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1,
+						type: 'SUBTASK'
 					});
 
 					throw new Error('expected to throw');
@@ -3175,14 +3578,12 @@ describe('/index.ts', () => {
 				try {
 					// @ts-expect-error
 					await hooks.registerScheduledSubTask({
-						delayDebounce: false,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: {
-							...task,
-							repeatMax: 1,
-							totalExecutions: 1
-						}
+						...task,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1,
+						repeatMax: 1,
+						totalExecutions: 1
 					});
 
 					throw new Error('expected to throw');
@@ -3196,13 +3597,11 @@ describe('/index.ts', () => {
 				try {
 					// @ts-expect-error
 					await hooks.registerScheduledSubTask({
-						delayDebounce: false,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: {
-							...task,
-							repeatMax: 1
-						}
+						...task,
+						eventDelayDebounce: false,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1,
+						repeatMax: 1
 					});
 
 					throw new Error('expected to throw');
@@ -3217,16 +3616,15 @@ describe('/index.ts', () => {
 			it('should create', async () => {
 				// @ts-expect-error
 				const res = await hooks.registerScheduledSubTask({
-					delayDebounce: true,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					parentTask: task
+					...task,
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1
 				});
 
 				expect(hooks.db.tasks.put).toHaveBeenCalledWith(
 					expect.objectContaining({
 						eventPattern: '-',
-						forkId: '',
 						id: expect.stringMatching(`${task.id}#DELAY-DEBOUNCE`),
 						namespace: 'spec#SUBTASK',
 						namespace__eventPattern: '-',
@@ -3254,11 +3652,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
-					forkId: '',
 					id: expect.stringMatching(`${task.id}#DELAY-DEBOUNCE`),
 					lastError: '',
 					lastErrorDate: '',
@@ -3266,7 +3666,7 @@ describe('/index.ts', () => {
 					lastExecutionDate: '',
 					lastExecutionType: '',
 					lastResponseBody: '',
-					lastResponseHeaders: {},
+					lastResponseHeaders: null,
 					lastResponseStatus: 0,
 					namespace: 'spec#SUBTASK',
 					namespace__eventPattern: '-',
@@ -3298,22 +3698,18 @@ describe('/index.ts', () => {
 			it('should create by fork', async () => {
 				// @ts-expect-error
 				const res = await hooks.registerScheduledSubTask({
-					delayDebounce: true,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					parentTask: {
-						...task,
-						forkId: 'fork-id',
-						id: `${task.id}#fork-id`,
-						namespace: 'spec#FORK',
-						type: 'FORK'
-					}
+					...task,
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1,
+					id: `${task.id}#fork-id`,
+					namespace: 'spec#FORK',
+					type: 'FORK'
 				});
 
 				expect(hooks.db.tasks.put).toHaveBeenCalledWith(
 					expect.objectContaining({
 						eventPattern: '-',
-						forkId: 'fork-id',
 						id: expect.stringMatching(`${task.id}#fork-id#DELAY-DEBOUNCE`),
 						namespace: 'spec#FORK#SUBTASK',
 						namespace__eventPattern: '-',
@@ -3341,11 +3737,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
-					forkId: 'fork-id',
 					id: expect.stringMatching(`${task.id}#fork-id#DELAY-DEBOUNCE`),
 					lastError: '',
 					lastErrorDate: '',
@@ -3353,7 +3751,7 @@ describe('/index.ts', () => {
 					lastExecutionDate: '',
 					lastExecutionType: '',
 					lastResponseBody: '',
-					lastResponseHeaders: {},
+					lastResponseHeaders: null,
 					lastResponseStatus: 0,
 					namespace: 'spec#FORK#SUBTASK',
 					namespace__eventPattern: '-',
@@ -3388,23 +3786,20 @@ describe('/index.ts', () => {
 				await Promise.all([
 					// @ts-expect-error
 					hooks.registerScheduledSubTask({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: task
+						...task,
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					}),
 					// @ts-expect-error
 					hooks.registerScheduledSubTask({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: {
-							...task,
-							forkId: 'fork-id',
-							id: `${task.id}#fork-id`,
-							namespace: 'spec#FORK',
-							type: 'FORK'
-						}
+						...task,
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1,
+						id: `${task.id}#fork-id`,
+						namespace: 'spec#FORK',
+						type: 'FORK'
 					})
 				]);
 			});
@@ -3412,16 +3807,15 @@ describe('/index.ts', () => {
 			it('should update', async () => {
 				// @ts-expect-error
 				const res = await hooks.registerScheduledSubTask({
-					delayDebounce: true,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					parentTask: task
+					...task,
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1
 				});
 
 				expect(hooks.db.tasks.put).toHaveBeenCalledWith(
 					expect.objectContaining({
 						eventPattern: '-',
-						forkId: '',
 						id: expect.stringMatching(`${task.id}#DELAY-DEBOUNCE`),
 						namespace: 'spec#SUBTASK',
 						namespace__eventPattern: '-',
@@ -3449,11 +3843,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
-					forkId: '',
 					id: expect.stringMatching(`${task.id}#DELAY-DEBOUNCE`),
 					lastError: '',
 					lastErrorDate: '',
@@ -3461,7 +3857,7 @@ describe('/index.ts', () => {
 					lastExecutionDate: '',
 					lastExecutionType: '',
 					lastResponseBody: '',
-					lastResponseHeaders: {},
+					lastResponseHeaders: null,
 					lastResponseStatus: 0,
 					namespace: 'spec#SUBTASK',
 					namespace__eventPattern: '-',
@@ -3493,22 +3889,18 @@ describe('/index.ts', () => {
 			it('should update by fork', async () => {
 				// @ts-expect-error
 				const res = await hooks.registerScheduledSubTask({
-					delayDebounce: true,
-					delayUnit: 'minutes',
-					delayValue: 1,
-					parentTask: {
-						...task,
-						forkId: 'fork-id',
-						id: `${task.id}#fork-id`,
-						namespace: 'spec#FORK',
-						type: 'FORK'
-					}
+					...task,
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1,
+					id: `${task.id}#fork-id`,
+					namespace: 'spec#FORK',
+					type: 'FORK'
 				});
 
 				expect(hooks.db.tasks.put).toHaveBeenCalledWith(
 					expect.objectContaining({
 						eventPattern: '-',
-						forkId: 'fork-id',
 						id: expect.stringMatching(`${task.id}#fork-id#DELAY-DEBOUNCE`),
 						namespace: 'spec#FORK#SUBTASK',
 						namespace__eventPattern: '-',
@@ -3536,11 +3928,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
-					forkId: 'fork-id',
 					id: expect.stringMatching(`${task.id}#fork-id#DELAY-DEBOUNCE`),
 					lastError: '',
 					lastErrorDate: '',
@@ -3548,7 +3942,7 @@ describe('/index.ts', () => {
 					lastExecutionDate: '',
 					lastExecutionType: '',
 					lastResponseBody: '',
-					lastResponseHeaders: {},
+					lastResponseHeaders: null,
 					lastResponseStatus: 0,
 					namespace: 'spec#FORK#SUBTASK',
 					namespace__eventPattern: '-',
@@ -3687,11 +4081,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: '',
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -3699,7 +4095,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec',
 				namespace__eventPattern: '-',
@@ -3746,11 +4142,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: 'event-pattern',
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: `${currentYear + 1}-01-01T03:00:00.000Z`,
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -3758,7 +4156,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec',
 				namespace__eventPattern: 'spec#event-pattern',
@@ -3812,33 +4210,23 @@ describe('/index.ts', () => {
 
 			await Promise.all([
 				// @ts-expect-error
+				hooks.registerScheduledSubTask(createTestSubTaskInput(task)),
+				// @ts-expect-error
 				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						parentTask: task
+					createTestSubTaskInput(task, {
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					})
 				),
 				// @ts-expect-error
-				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: task
-					})
-				),
+				hooks.registerScheduledSubTask(createTestSubTaskInput(forkTask)),
 				// @ts-expect-error
 				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						parentTask: forkTask
-					})
-				),
-				// @ts-expect-error
-				hooks.registerScheduledSubTask(
-					createTestSubTaskInput({
-						delayDebounce: true,
-						delayUnit: 'minutes',
-						delayValue: 1,
-						parentTask: forkTask
+					createTestSubTaskInput(forkTask, {
+						eventDelayDebounce: true,
+						eventDelayUnit: 'minutes',
+						eventDelayValue: 1
 					})
 				)
 			]);
@@ -3870,7 +4258,7 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${task.id}#fork-id#DELAY`),
+						id: expect.stringMatching(`${task.id}#fork-id#DELAY#[0-9]`),
 						namespace: 'spec#FORK#SUBTASK',
 						status: 'ACTIVE'
 					},
@@ -3880,7 +4268,7 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${task.id}#DELAY`),
+						id: expect.stringMatching(`${task.id}#DELAY#[0-9]`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
@@ -4146,11 +4534,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: expect.any(String),
 				firstExecutionDate: '',
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: 'test',
 				lastErrorDate: expect.any(String),
@@ -4158,7 +4548,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec',
 				namespace__eventPattern: '-',
@@ -4249,11 +4639,13 @@ describe('/index.ts', () => {
 				concurrency: true,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: expect.any(String),
 				firstExecutionDate: '',
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: 'test',
 				lastErrorDate: expect.any(String),
@@ -4261,7 +4653,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec',
 				namespace__eventPattern: '-',
@@ -4363,11 +4755,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: expect.any(String),
 				firstExecutionDate: '',
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: 'test',
 				lastErrorDate: expect.any(String),
@@ -4375,7 +4769,7 @@ describe('/index.ts', () => {
 				lastExecutionDate: '',
 				lastExecutionType: '',
 				lastResponseBody: '',
-				lastResponseHeaders: {},
+				lastResponseHeaders: null,
 				lastResponseStatus: 0,
 				namespace: 'spec',
 				namespace__eventPattern: '-',
@@ -4559,11 +4953,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: '',
 				firstExecutionDate: expect.any(String),
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -4678,11 +5074,13 @@ describe('/index.ts', () => {
 				concurrency: true,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: '',
 				firstExecutionDate: expect.any(String),
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -4806,11 +5204,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: '',
 				firstExecutionDate: expect.any(String),
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -4933,11 +5333,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: '',
 				firstExecutionDate: expect.any(String),
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -5060,11 +5462,13 @@ describe('/index.ts', () => {
 				concurrency: false,
 				conditionFilter: null,
 				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
 				eventPattern: '-',
 				firstErrorDate: '',
 				firstExecutionDate: expect.any(String),
 				firstScheduledDate: expect.any(String),
-				forkId: '',
 				id: expect.any(String),
 				lastError: '',
 				lastErrorDate: '',
@@ -5189,11 +5593,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: expect.any(String),
 					firstScheduledDate: expect.any(String),
-					forkId: '',
 					id: expect.any(String),
 					lastError: '',
 					lastErrorDate: '',
@@ -5316,11 +5722,13 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: null,
 					description: '',
+					eventDelayDebounce: false,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 0,
 					eventPattern: '-',
 					firstErrorDate: '',
 					firstExecutionDate: expect.any(String),
 					firstScheduledDate: expect.any(String),
-					forkId: '',
 					id: expect.any(String),
 					lastError: '',
 					lastErrorDate: '',
@@ -5519,7 +5927,7 @@ describe('/index.ts', () => {
 				},
 				conditionFilter: {
 					type: 'STRING',
-					path: ['a'],
+					path: ['key'],
 					operator: 'EQUALS',
 					value: 'test-1'
 				},
