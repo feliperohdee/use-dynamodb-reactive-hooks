@@ -5665,6 +5665,33 @@ describe('/index.ts', () => {
 			expect(res.status).toEqual('PROCESSING');
 			expect(res.pid).toEqual('test');
 		});
+
+		it('should throw is task.status !== ACTIVE', async () => {
+			task = await hooks.db.tasks.update({
+				attributeNames: { '#status': 'status' },
+				attributeValues: { ':status': 'PROCESSING' },
+				filter: {
+					item: {
+						id: task.id,
+						namespace: 'spec'
+					}
+				},
+				updateExpression: 'SET #status = :status'
+			});
+
+			try {
+				// @ts-expect-error
+				await hooks.setTaskLock({
+					pid: 'test',
+					task
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Task is not in a valid state');
+			}
+		});
 	});
 
 	describe('setTaskSuccess', () => {
@@ -6613,32 +6640,31 @@ describe('/index.ts', () => {
 	describe('trigger', () => {
 		let tasks: Hooks.Task[];
 
-		beforeEach(async () => {
-			tasks = await Promise.all(
-				_.map(
-					[
-						createTestTask(0, {
-							eventPattern: 'event-pattern-1',
-							requestMethod: 'GET'
-						}),
-						createTestTask(0, {
-							eventPattern: 'event-pattern-2',
-							requestMethod: 'GET'
-						}),
-						createTestTask(1000)
-					],
-					task => {
-						return hooks.registerTask(task);
-					}
-				)
-			);
+		beforeAll(async () => {
+			tasks = await Promise.all([
+				hooks.registerTask(
+					createTestTask(0, {
+						eventPattern: 'event-pattern-1',
+						requestMethod: 'GET'
+					})
+				),
+				hooks.registerTask(
+					createTestTask(0, {
+						eventPattern: 'event-pattern-2',
+						requestMethod: 'GET'
+					})
+				),
+				hooks.registerTask(createTestTask(1000))
+			]);
+		});
 
+		beforeEach(() => {
 			vi.spyOn(hooks, 'callWebhook');
 			// @ts-expect-error
 			vi.spyOn(hooks, 'queryActiveTasks');
 		});
 
-		afterEach(async () => {
+		afterAll(async () => {
 			await Promise.all([hooks.clearTasks('spec'), hooks.webhooks.clearLogs('spec')]);
 		});
 
