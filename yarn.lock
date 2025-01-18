@@ -1850,6 +1850,11 @@ use-async-helpers@^1.0.15:
   resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.15.tgz#5174eabbe824dd36efc7bc3c42c50ff0ed803575"
   integrity sha512-9/UjY4VVjCBvk8tQvemZZyCO+BvtEmMB0g6meSXfA8Wfn8h9Tz08Ke4nThOxp4K9dbz4NObu9P2nz3BwIfaSQw==
 
+use-async-helpers@^1.0.18:
+  version "1.0.18"
+  resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.18.tgz#1c8b77180d389b2d183d690bc4f5cf62b6a59d39"
+  integrity sha512-aBD6nnR+N2c5IStvN7C2Nw9JaibyydCDqidRFuXT0r/SPTgfoLUTY7oomkxCI9JfOAAf9iX9lMBrrb/uunvKaQ==
+
 use-dynamodb-webhooks@^1.0.17:
   version "1.0.17"
   resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.17.tgz#be5d2ae80499b7e780f6bbe664119ba9678b53d2"

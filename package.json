@@ -2,7 +2,7 @@
 	"name": "use-dynamodb-reactive-hooks",
 	"dependencies": {
 		"lodash": "^4.17.21",
-		"use-async-helpers": "^1.0.15",
+		"use-async-helpers": "^1.0.18",
 		"use-dynamodb": "^1.0.55",
 		"use-dynamodb-webhooks": "^1.0.17",
 		"use-filter-criteria": "^1.0.17",

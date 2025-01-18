@@ -3,12 +3,14 @@ import UseFilterCriteria from 'use-filter-criteria';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 
-const optionalRequestInput = z.object({
-	requestBody: z.record(z.any()).nullable(),
-	requestHeaders: z.record(z.string()).nullable(),
-	requestMethod: Webhooks.schema.request.shape.method.nullable(),
-	requestUrl: z.string().url().nullable()
-}).partial();
+const optionalRequestInput = z
+	.object({
+		requestBody: z.record(z.any()).nullable(),
+		requestHeaders: z.record(z.string()).nullable(),
+		requestMethod: Webhooks.schema.request.shape.method.nullable(),
+		requestUrl: z.string().url().nullable()
+	})
+	.partial();
 
 const taskExecutionType = z.enum(['EVENT', 'SCHEDULED']);
 const taskKeys = z.object({ id: z.string(), namespace: z.string() });
@@ -30,6 +32,7 @@ const task = z.object({
 	firstErrorDate: z.union([z.string().datetime(), z.literal('')]),
 	firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
 	firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
+	forkId: z.string(),
 	id: z.string(),
 	lastError: z.string(),
 	lastErrorDate: z.union([z.string().datetime(), z.literal('')]),
@@ -43,9 +46,9 @@ const task = z.object({
 	namespace__eventPattern: z.union([z.string(), z.literal('-')]),
 	noAfter: z.union([z.string().datetime(), z.literal('')]),
 	noBefore: z.union([z.string().datetime(), z.literal('')]),
-	parentId: z.string(),
-	parentNamespace: z.string(),
 	pid: z.string(),
+	primaryId: z.string(),
+	primaryNamespace: z.string(),
 	repeatInterval: z.number().min(0),
 	repeatMax: z.number().min(0),
 	repeatUnit: timeUnit,
@@ -103,6 +106,7 @@ const taskInput = task
 		firstErrorDate: true,
 		firstExecutionDate: true,
 		firstScheduledDate: true,
+		forkId: true,
 		lastError: true,
 		lastErrorDate: true,
 		lastErrorExecutionType: true,
@@ -112,9 +116,9 @@ const taskInput = task
 		lastResponseHeaders: true,
 		lastResponseStatus: true,
 		namespace__eventPattern: true,
-		parentId: true,
-		parentNamespace: true,
 		pid: true,
+		primaryId: true,
+		primaryNamespace: true,
 		status: true,
 		totalErrors: true,
 		totalExecutions: true,
@@ -176,6 +180,7 @@ const checkExecuteTaskInput = z.object({
 });
 
 const deleteInput = z.object({
+	fork: z.boolean().default(false),
 	id: z.string(),
 	namespace: z.string()
 });
@@ -186,9 +191,9 @@ const fetchInput = z
 		desc: z.boolean().default(false),
 		eventPattern: z.string().optional(),
 		eventPatternPrefix: z.boolean().default(false),
+		fork: z.boolean().default(false),
 		fromScheduledDate: z.string().datetime({ offset: true }).optional(),
 		id: z.string().optional(),
-		idPrefix: z.boolean().default(false),
 		limit: z.number().min(1).default(100),
 		namespace: z.string(),
 		onChunk: z
@@ -221,7 +226,7 @@ const fetchInput = z
 
 const fetchLogsInput = Webhooks.schema.fetchLogsInput;
 const getTaskInput = z.object({
-	forkId: z.string().optional(),
+	fork: z.boolean().default(false),
 	id: z.string(),
 	namespace: z.string(),
 	type: z.enum(['SUBTASK-DELAY', 'SUBTASK-DELAY-DEBOUNCE']).optional()
@@ -256,11 +261,12 @@ const queryActiveTasksInput = z.union([
 
 const registerForkTaskInput = z.object({
 	forkId: z.string(),
-	parentTask: task
+	primaryTask: task
 });
 
 const setTaskActiveInput = z.object({
 	active: z.boolean(),
+	fork: z.boolean().default(false),
 	id: z.string(),
 	namespace: z.string()
 });
