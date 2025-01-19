@@ -1124,9 +1124,6 @@ describe('/index.ts', () => {
 						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						firstExecutionDate: expect.any(String),
-						forkId: 'fork-id',
-						// @ts-expect-error
-						id: await hooks.uuidFromString('fork-id'),
 						lastExecutionDate: expect.any(String),
 						lastExecutionType: 'EVENT',
 						lastResponseBody: expect.any(String),
@@ -1134,8 +1131,7 @@ describe('/index.ts', () => {
 						lastResponseStatus: 200,
 						scheduledDate: expect.any(String),
 						totalExecutions: 1,
-						totalSuccessfulExecutions: 1,
-						type: 'FORK'
+						totalSuccessfulExecutions: 1
 					}
 				]);
 			});
@@ -1449,7 +1445,6 @@ describe('/index.ts', () => {
 					eventDelayUnit: 'minutes',
 					eventDelayValue: 1
 				});
-				return;
 				// @ts-expect-error
 				expect(hooks.getSubTaskParent).not.toHaveBeenCalled();
 				// @ts-expect-error
@@ -1466,16 +1461,10 @@ describe('/index.ts', () => {
 						__createdAt: expect.any(String),
 						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
-						conditionFilter: null,
-						eventDelayDebounce: false,
-						eventDelayUnit: 'minutes',
 						eventDelayValue: 0,
 						firstScheduledDate: expect.any(String),
-						forkId: 'fork-id',
 						id: expect.stringMatching(`${forkTask.id}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
-						primaryId: task.id,
-						primaryNamespace: 'spec',
 						repeatInterval: 0,
 						scheduledDate: expect.any(String),
 						ttl: expect.any(Number),
