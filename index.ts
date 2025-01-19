@@ -33,6 +33,7 @@ namespace Hooks {
 
 	export type CallWebhookInput = z.input<typeof schema.callWebhookInput>;
 	export type CheckExecuteTaskInput = z.input<typeof schema.checkExecuteTaskInput>;
+	export type DebugConditionInput = z.input<typeof schema.debugConditionInput>;
 	export type DeleteInput = z.input<typeof schema.deleteInput>;
 	export type FetchInput = z.input<typeof schema.fetchInput>;
 	export type FetchLogsInput = z.input<typeof schema.fetchLogsInput>;
@@ -53,6 +54,7 @@ namespace Hooks {
 	export type TimeUnit = z.infer<typeof schema.timeUnit>;
 	export type TriggerInput = z.input<typeof schema.triggerInput>;
 	export type TriggerInputConditionFilter = UseFilterCriteria.MatchInput;
+	export type UpdateTaskInput = z.input<typeof schema.updateTaskInput>;
 }
 
 const taskShape = (input: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => {
@@ -201,7 +203,7 @@ class Hooks {
 
 			let task = taskShape(retrievedTask);
 
-			if (task.conditionFilter && !_.isNil(args.conditionData)) {
+			if (task.conditionFilter) {
 				const match = await UseFilterCriteria.match(args.conditionData, task.conditionFilter);
 
 				if (!match) {
@@ -239,16 +241,7 @@ class Hooks {
 
 						task = await this.registerForkTask({
 							forkId: args.forkId,
-							primaryTask: {
-								...task!,
-								eventDelayDebounce: delay.eventDelayDebounce,
-								eventDelayUnit: delay.eventDelayUnit,
-								eventDelayValue: delay.eventDelayValue,
-								requestBody: request.requestBody,
-								requestHeaders: request.requestHeaders,
-								requestMethod: request.requestMethod,
-								requestUrl: request.requestUrl
-							}
+							primaryTask: task!
 						});
 
 						type = 'FORK';
@@ -318,7 +311,13 @@ class Hooks {
 						executionType: args.executionType,
 						log,
 						pid,
-						task
+						task: {
+							...task!,
+							requestBody: request.requestBody,
+							requestHeaders: request.requestHeaders,
+							requestMethod: request.requestMethod,
+							requestUrl: request.requestUrl
+						}
 					});
 				} catch (err) {
 					if (err instanceof ConditionalCheckFailedException || err instanceof TaskException) {
@@ -329,11 +328,26 @@ class Hooks {
 						error: err as Error,
 						executionType: args.executionType,
 						pid,
-						task: task!
+						task: {
+							...task!,
+							requestBody: request.requestBody,
+							requestHeaders: request.requestHeaders,
+							requestMethod: request.requestMethod,
+							requestUrl: request.requestUrl
+						}
 					});
 				}
 
-				return task;
+				return {
+					...task!,
+					eventDelayDebounce: delay.eventDelayDebounce,
+					eventDelayUnit: delay.eventDelayUnit,
+					eventDelayValue: delay.eventDelayValue,
+					requestBody: request.requestBody,
+					requestHeaders: request.requestHeaders,
+					requestMethod: request.requestMethod,
+					requestUrl: request.requestUrl
+				};
 			};
 
 			promiseTasks = [...promiseTasks, promiseTask];
@@ -413,6 +427,24 @@ class Hooks {
 		return count;
 	}
 
+	async debugCondition(input: Hooks.DebugConditionInput): Promise<UseFilterCriteria.MatchDetailedResult> {
+		const args = await schema.debugConditionInput.parseAsync(input);
+		const task = await this.getTaskInternal({
+			id: args.id,
+			namespace: args.namespace
+		});
+
+		if (!task) {
+			throw new TaskException('Task not found');
+		}
+
+		if (!task.conditionFilter) {
+			throw new TaskException('Task has no condition filter');
+		}
+
+		return UseFilterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<UseFilterCriteria.MatchDetailedResult>;
+	}
+
 	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task | null> {
 		const args = await schema.deleteInput.parseAsync(input);
 		const task = await this.getTaskInternal(
@@ -476,8 +508,7 @@ class Hooks {
 					_.map(items, item => {
 						return {
 							id: item.id,
-							namespace: item.namespace,
-							type: item.type
+							namespace: item.namespace
 						};
 					})
 				);
@@ -525,6 +556,10 @@ class Hooks {
 
 		if (args.fork) {
 			namespace = `${args.namespace}#FORK`;
+		}
+
+		if (args.subTask) {
+			namespace = `${args.namespace}#SUBTASK`;
 		}
 
 		const queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
@@ -614,6 +649,7 @@ class Hooks {
 		// QUERY BY ID
 		if (args.id) {
 			let id = args.id;
+			let prefix = false;
 
 			if (args.fork) {
 				id = await this.uuidFromString(args.id);
@@ -630,6 +666,10 @@ class Hooks {
 			};
 
 			queryOptions.queryExpression = '#namespace = :namespace AND #id = :id';
+
+			if (prefix) {
+				queryOptions.queryExpression = '#namespace = :namespace AND begins_with(#id, :id)';
+			}
 
 			return query(queryOptions);
 		}
@@ -697,26 +737,14 @@ class Hooks {
 		const args = await schema.getTaskInput.parseAsync(input);
 
 		let [id, namespace] = [args.id, args.namespace];
-		let prefix = false;
 
 		if (args.fork) {
 			id = await this.uuidFromString(args.id);
 			namespace = `${args.namespace}#FORK`;
 		}
 
-		if (args.type === 'SUBTASK-DELAY') {
-			id = [id, 'DELAY'].join('#');
-			namespace = `${args.namespace}#SUBTASK`;
-			prefix = true;
-		} else if (args.type === 'SUBTASK-DELAY-DEBOUNCE') {
-			id = [id, 'DELAY-DEBOUNCE'].join('#');
-			namespace = `${args.namespace}#SUBTASK`;
-			prefix = false;
-		}
-
 		const res = await this.db.tasks.get({
-			item: { namespace, id },
-			prefix
+			item: { namespace, id }
 		});
 
 		return res ? taskShape(res) : null;
@@ -826,16 +854,16 @@ class Hooks {
 	private async registerDelayedSubTask(input: Hooks.Task): Promise<Hooks.Task> {
 		const args = await schema.task.parseAsync(input);
 
+		if (args.repeatMax > 0 && args.totalExecutions >= args.repeatMax) {
+			throw new TaskException('Primary task has reached the repeat max by totalExecutions');
+		}
+
 		if (args.status === 'DISABLED') {
 			throw new TaskException('Primary task is disabled');
 		}
 
 		if (args.type !== 'PRIMARY' && args.type !== 'FORK') {
 			throw new TaskException('Task must be a primary or fork task');
-		}
-
-		if (args.repeatMax > 0 && args.totalExecutions >= args.repeatMax) {
-			throw new TaskException('Primary task has reached the repeat max by totalExecutions');
 		}
 
 		const date = new Date();
@@ -900,7 +928,7 @@ class Hooks {
 		});
 	}
 
-	private async registerForkTask(input: Hooks.RegisterForkTaskInput): Promise<Hooks.Task> {
+	private async registerForkTask(input: Hooks.RegisterForkTaskInput, overwrite: boolean = false): Promise<Hooks.Task> {
 		const args = await schema.registerForkTaskInput.parseAsync(input);
 
 		if (args.primaryTask.status === 'DISABLED') {
@@ -909,6 +937,14 @@ class Hooks {
 
 		if (args.primaryTask.type !== 'PRIMARY') {
 			throw new TaskException('Task must be a primary task');
+		}
+
+		const id = await this.uuidFromString(args.forkId);
+		const namespace = `${args.primaryTask.primaryNamespace}#FORK`;
+		const currentFork = !overwrite ? await this.getTaskInternal({ id, namespace }) : null;
+
+		if (currentFork) {
+			return currentFork;
 		}
 
 		return await this.db.tasks.put(
@@ -922,8 +958,8 @@ class Hooks {
 				eventPattern: args.primaryTask.eventPattern,
 				firstScheduledDate: args.primaryTask.scheduledDate,
 				forkId: args.forkId,
-				id: await this.uuidFromString(args.forkId),
-				namespace: `${args.primaryTask.primaryNamespace}#FORK`,
+				id,
+				namespace,
 				namespace__eventPattern: args.primaryTask.namespace__eventPattern,
 				noAfter: args.primaryTask.noAfter,
 				noBefore: args.primaryTask.noBefore,
@@ -942,10 +978,7 @@ class Hooks {
 				status: 'ACTIVE',
 				type: 'FORK'
 			}),
-			{
-				overwrite: true,
-				useCurrentCreatedAtIfExists: true
-			}
+			{ overwrite }
 		);
 	}
 
@@ -985,6 +1018,8 @@ class Hooks {
 
 	async setTaskActive(input: Hooks.SetTaskActiveInput): Promise<Hooks.Task | null> {
 		const args = await schema.setTaskActiveInput.parseAsync(input);
+		const date = new Date();
+		const now = _.now();
 		const task = await this.getTaskInternal(
 			args.fork
 				? {
@@ -1090,11 +1125,19 @@ class Hooks {
 
 						return {
 							Update: {
-								ExpressionAttributeNames: { '#status': 'status' },
-								ExpressionAttributeValues: { ':status': status },
+								ExpressionAttributeNames: {
+									'#status': 'status',
+									'#ts': '__ts',
+									'#updatedAt': '__updatedAt'
+								},
+								ExpressionAttributeValues: {
+									':status': status,
+									':ts': now,
+									':updatedAt': date.toISOString()
+								},
 								Key: { id, namespace },
 								TableName: this.db.tasks.table,
-								UpdateExpression: 'SET #status = :status'
+								UpdateExpression: 'SET #status = :status, #ts = :ts, #updatedAt = :updatedAt'
 							}
 						};
 					});
@@ -1108,10 +1151,13 @@ class Hooks {
 
 		await promiseAllSettled(promiseTasks, this.maxConcurrency);
 
-		return {
-			...task,
-			status
-		};
+		return this.getTaskInternal(
+			{
+				id: task.id,
+				namespace: task.namespace
+			},
+			true
+		);
 	}
 
 	private async setTaskError(input: Hooks.SetTaskErrorInput): Promise<Hooks.Task> {
@@ -1502,6 +1548,150 @@ class Hooks {
 		}
 
 		return result;
+	}
+
+	async updateTask(input: Hooks.UpdateTaskInput): Promise<Hooks.Task> {
+		const args = await schema.updateTaskInput.parseAsync(input);
+		const date = new Date();
+		const now = _.now();
+		const task = await this.getTaskInternal(
+			args.fork
+				? {
+						id: await this.uuidFromString(args.id),
+						namespace: `${args.namespace}#FORK`
+					}
+				: {
+						id: args.id,
+						namespace: args.namespace
+					}
+		);
+
+		if (!task) {
+			throw new TaskException('Task not found');
+		}
+
+		if (task.type !== 'PRIMARY' && task.type !== 'FORK') {
+			throw new TaskException('Task must be a primary or fork task');
+		}
+
+		let keys: Dynamodb.MultiResponse<Hooks.TaskKeys> = {
+			count: 0,
+			items: [],
+			lastEvaluatedKey: null
+		};
+
+		if (task.type === 'FORK') {
+			// query all forks
+			keys = await this.db.tasks.query({
+				item: {
+					id: task.id,
+					namespace: `${task.primaryNamespace}#FORK`
+				},
+				limit: Infinity,
+				select: ['id', 'namespace']
+			});
+		} else {
+			// query all tasks' children
+			keys = await this.db.tasks.query({
+				attributeNames: { '#type': 'type' },
+				attributeValues: {
+					':fork': 'FORK',
+					':primary': 'PRIMARY'
+				},
+				filterExpression: '#type = :fork OR #type = :primary',
+				item: {
+					primaryId: task.id,
+					primaryNamespace: task.primaryNamespace
+				},
+				limit: Infinity,
+				select: ['id', 'namespace']
+			});
+		}
+
+		let promiseTasks: (() => Promise<TransactWriteCommandOutput[]>)[] = [];
+		let updateProperties = _.pick(args, [
+			'concurrency',
+			'conditionFilter',
+			'description',
+			'eventDelayDebounce',
+			'eventDelayUnit',
+			'eventDelayValue',
+			'noAfter',
+			'noBefore',
+			'repeatInterval',
+			'repeatMax',
+			'repeatUnit',
+			'requestBody',
+			'requestHeaders',
+			'requestMethod',
+			'requestUrl',
+			'rescheduleOnEvent',
+			'retryLimit',
+			'scheduledDate'
+		]);
+
+		let updateAttributes = _.reduce(
+			updateProperties,
+			(reduction, value, key) => {
+				if (key === 'noAfter' || key === 'noBefore' || key === 'scheduledDate') {
+					value = new Date(value as string).toISOString();
+				}
+
+				reduction.attributeNames[`#${key}`] = key;
+				reduction.attributeValues[`:${key}`] = value;
+				reduction.expression = reduction.expression.concat(`#${key} = :${key}`);
+
+				return reduction;
+			},
+			{
+				attributeNames: {
+					'#ts': '__ts',
+					'#updatedAt': '__updatedAt'
+				},
+				attributeValues: {
+					':ts': now,
+					':updatedAt': date.toISOString()
+				},
+				expression: ['#ts = :ts', '#updatedAt = :updatedAt']
+			} as {
+				attributeNames: Record<string, string>;
+				attributeValues: Record<string, any>;
+				expression: string[];
+			}
+		);
+
+		for (const chunk of _.chunk(keys.items, 25)) {
+			promiseTasks = [
+				...promiseTasks,
+				() => {
+					const transactItems = _.map(chunk, ({ id, namespace }) => {
+						return {
+							Update: {
+								ExpressionAttributeNames: updateAttributes.attributeNames,
+								ExpressionAttributeValues: updateAttributes.attributeValues,
+								Key: { id, namespace },
+								TableName: this.db.tasks.table,
+								UpdateExpression: `SET ${updateAttributes.expression.join(', ')}`
+							}
+						};
+					});
+
+					return this.db.tasks.transaction({
+						TransactItems: _.compact(transactItems)
+					});
+				}
+			];
+		}
+
+		await promiseAllSettled(promiseTasks, this.maxConcurrency);
+
+		return (await this.getTaskInternal(
+			{
+				id: task.id,
+				namespace: task.namespace
+			},
+			true
+		))!;
 	}
 
 	private uuid(): string {

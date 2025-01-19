@@ -3,6 +3,14 @@ import UseFilterCriteria from 'use-filter-criteria';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 
+const isFutureDate = (date: string) => {
+	return new Date(date) > new Date(_.now() - 1000);
+};
+
+const date1IsAfterDate2 = (date1: string, date2: string) => {
+	return new Date(date1) > new Date(date2);
+};
+
 const optionalRequestInput = z
 	.object({
 		requestBody: z.record(z.any()).nullable(),
@@ -70,32 +78,11 @@ const task = z.object({
 
 const taskInput = task
 	.extend({
-		noAfter: z.union([
-			z.literal(''),
-			z
-				.string()
-				.datetime({ offset: true })
-				.refine(date => {
-					return new Date(date) > new Date(_.now() - 1000);
-				}, 'noAfter cannot be in the past')
-		]),
-		noBefore: z.union([
-			z.literal(''),
-			z
-				.string()
-				.datetime({ offset: true })
-				.refine(date => {
-					return new Date(date) > new Date(_.now() - 1000);
-				}, 'noBefore cannot be in the past')
-		]),
+		noAfter: z.union([z.literal(''), z.string().datetime({ offset: true }).refine(isFutureDate, 'noAfter cannot be in the past')]),
+		noBefore: z.union([z.literal(''), z.string().datetime({ offset: true }).refine(isFutureDate, 'noBefore cannot be in the past')]),
 		scheduledDate: z.union([
 			z.literal(''),
-			z
-				.string()
-				.datetime({ offset: true })
-				.refine(date => {
-					return new Date(date) > new Date(_.now() - 1000);
-				}, 'scheduledDate cannot be in the past')
+			z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past')
 		])
 	})
 	.omit({
@@ -149,7 +136,7 @@ const taskInput = task
 	.refine(
 		data => {
 			if (data.noAfter && data.noBefore) {
-				return new Date(data.noAfter) > new Date(data.noBefore);
+				return date1IsAfterDate2(data.noAfter, data.noBefore);
 			}
 
 			return true;
@@ -177,6 +164,12 @@ const callWebhookInput = z
 const checkExecuteTaskInput = z.object({
 	date: z.date(),
 	task
+});
+
+const debugConditionInput = z.object({
+	conditionData: z.record(z.any()).nullable(),
+	id: z.string(),
+	namespace: z.string()
 });
 
 const deleteInput = z.object({
@@ -208,6 +201,7 @@ const fetchInput = z
 			.optional(),
 		startKey: z.record(z.any()).nullable().default(null),
 		status: taskStatus.nullable().optional(),
+		subTask: z.boolean().default(false),
 		toScheduledDate: z.string().datetime({ offset: true }).optional()
 	})
 	.refine(
@@ -228,8 +222,7 @@ const fetchLogsInput = Webhooks.schema.fetchLogsInput;
 const getTaskInput = z.object({
 	fork: z.boolean().default(false),
 	id: z.string(),
-	namespace: z.string(),
-	type: z.enum(['SUBTASK-DELAY', 'SUBTASK-DELAY-DEBOUNCE']).optional()
+	namespace: z.string()
 });
 
 const log = Webhooks.schema.log;
@@ -323,9 +316,48 @@ const triggerInput = z.union([
 		.merge(optionalRequestInput)
 ]);
 
+const updateTaskInput = z
+	.object({
+		fork: z.boolean().default(false),
+		id: z.string(),
+		namespace: z.string(),
+		concurrency: z.boolean().optional(),
+		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
+		description: z.string().optional(),
+		eventDelayDebounce: z.boolean().optional(),
+		eventDelayUnit: timeUnit.optional(),
+		eventDelayValue: z.number().min(0).optional(),
+		noAfter: z.string().datetime({ offset: true }).refine(isFutureDate, 'noAfter cannot be in the past').optional(),
+		noBefore: z.string().datetime({ offset: true }).refine(isFutureDate, 'noBefore cannot be in the past').optional(),
+		repeatInterval: z.number().min(0).optional(),
+		repeatMax: z.number().min(0).optional(),
+		repeatUnit: timeUnit.optional(),
+		requestBody: z.record(z.any()).optional(),
+		requestHeaders: z.record(z.string()).optional(),
+		requestMethod: Webhooks.schema.request.shape.method.optional(),
+		requestUrl: z.string().url().optional(),
+		rescheduleOnEvent: z.boolean().optional(),
+		retryLimit: z.number().min(0).optional(),
+		scheduledDate: z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past').optional()
+	})
+	.refine(
+		data => {
+			if (data.noAfter && data.noBefore) {
+				return date1IsAfterDate2(data.noAfter, data.noBefore);
+			}
+
+			return true;
+		},
+		{
+			message: 'noAfter must be after noBefore',
+			path: ['noAfter']
+		}
+	);
+
 export default {
 	callWebhookInput,
 	checkExecuteTaskInput,
+	debugConditionInput,
 	deleteInput,
 	fetchInput,
 	fetchLogsInput,
@@ -344,5 +376,6 @@ export default {
 	taskStatus,
 	taskType,
 	timeUnit,
-	triggerInput
+	triggerInput,
+	updateTaskInput
 };
