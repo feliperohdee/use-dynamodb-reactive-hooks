@@ -191,17 +191,15 @@ class Hooks {
 		let promiseTasks: (() => Promise<Hooks.Task | null>)[] = [];
 
 		for (const keys of args.keys) {
-			const pid = this.uuid();
-			const retrievedTask = await this.getTaskInternal({
+			let pid = this.uuid();
+			let task = await this.getTaskInternal({
 				id: keys.id,
 				namespace: keys.namespace
 			});
 
-			if (!retrievedTask) {
+			if (!task) {
 				continue;
 			}
-
-			let task = taskShape(retrievedTask);
 
 			if (task.conditionFilter) {
 				const match = await UseFilterCriteria.match(args.conditionData, task.conditionFilter);
@@ -234,7 +232,7 @@ class Hooks {
 
 				try {
 					if (args.forkId) {
-						// forks taks must be only registered in EVENT mode
+						// forks tasks must be only registered in EVENT mode
 						if (args.executionType === 'SCHEDULED') {
 							return null;
 						}
