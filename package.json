@@ -2,21 +2,21 @@
 	"name": "use-dynamodb-reactive-hooks",
 	"dependencies": {
 		"lodash": "^4.17.21",
-		"use-async-helpers": "^1.0.19",
-		"use-dynamodb": "^1.0.56",
-		"use-dynamodb-webhooks": "^1.0.18",
+		"use-async-helpers": "^1.0.21",
+		"use-dynamodb": "^1.0.57",
+		"use-dynamodb-webhooks": "^1.0.19",
 		"use-filter-criteria": "^1.0.17",
-		"use-http-error": "^1.0.1",
+		"use-http-error": "^1.0.2",
 		"zod": "^3.24.1",
-		"zod-default-instance": "^1.0.12"
+		"zod-default-instance": "^1.0.15"
 	},
 	"devDependencies": {
-		"@types/lodash": "^4.17.13",
-		"@types/node": "^22.10.2",
-		"@vitest/coverage-v8": "2.1.8",
+		"@types/lodash": "^4.17.14",
+		"@types/node": "^22.10.7",
+		"@vitest/coverage-v8": "3.0.2",
 		"prettier": "^3.4.2",
-		"typescript": "^5.7.2",
-		"vitest": "^2.1.8"
+		"typescript": "^5.7.3",
+		"vitest": "^3.0.2"
 	},
 	"files": [
 		"dist"
@@ -35,5 +35,5 @@
 		"test": "./.test.sh",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.12"
+	"version": "1.0.14"
 }
