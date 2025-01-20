@@ -1018,7 +1018,7 @@ class Hooks {
 		);
 	}
 
-	async setTaskActive(input: Hooks.SetTaskActiveInput): Promise<Hooks.Task | null> {
+	async setTaskActive(input: Hooks.SetTaskActiveInput): Promise<Hooks.Task> {
 		const args = await schema.setTaskActiveInput.parseAsync(input);
 		const date = new Date();
 		const now = _.now();
@@ -1152,13 +1152,13 @@ class Hooks {
 
 		await promiseAllSettled(promiseTasks, this.maxConcurrency);
 
-		return this.getTaskInternal(
+		return (await this.getTaskInternal(
 			{
 				id: task.id,
 				namespace: task.namespace
 			},
 			true
-		);
+		))!;
 	}
 
 	private async setTaskError(input: Hooks.SetTaskErrorInput): Promise<Hooks.Task> {
@@ -1451,7 +1451,7 @@ class Hooks {
 			onChunk: async () => {}
 		};
 
-		if (input) {
+		if (_.size(input) > 0) {
 			const args = await schema.triggerInput.parseAsync(input);
 
 			if ('eventPattern' in args && args.eventPattern) {
@@ -1617,6 +1617,7 @@ class Hooks {
 			'eventDelayDebounce',
 			'eventDelayUnit',
 			'eventDelayValue',
+			'eventPattern',
 			'noAfter',
 			'noBefore',
 			'repeatInterval',
@@ -1642,6 +1643,12 @@ class Hooks {
 				reduction.attributeNames[`#${key}`] = key;
 				reduction.attributeValues[`:${key}`] = value;
 				reduction.expression = reduction.expression.concat(`#${key} = :${key}`);
+
+				if (key === 'eventPattern') {
+					reduction.attributeNames['#namespace__eventPattern'] = 'namespace__eventPattern';
+					reduction.attributeValues[':namespace__eventPattern'] = `${task.primaryNamespace}#${value}`;
+					reduction.expression = reduction.expression.concat('#namespace__eventPattern = :namespace__eventPattern');
+				}
 
 				return reduction;
 			},

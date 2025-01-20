@@ -355,6 +355,7 @@ const updateTaskInput = z
 		eventDelayDebounce: z.boolean().optional(),
 		eventDelayUnit: timeUnit.optional(),
 		eventDelayValue: z.number().min(0).optional(),
+		eventPattern: z.string().optional(),
 		noAfter: z.string().datetime({ offset: true }).refine(isFutureDate, 'noAfter cannot be in the past').optional(),
 		noBefore: z.string().datetime({ offset: true }).refine(isFutureDate, 'noBefore cannot be in the past').optional(),
 		repeatInterval: z.number().min(0).optional(),
