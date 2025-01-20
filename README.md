@@ -8,16 +8,21 @@ A TypeScript library that provides a webhook scheduling system using Amazon Dyna
 
 ## 🚀 Features
 
-- ✅ Register webhooks to be triggered at specific times
-- 🔁 Support for recurring webhooks with flexible intervals
-- 📊 Webhook status tracking (ACTIVE, PROCESSING, DONE, FAILED, DISABLED)
-- 🔄 Automatic retries with configurable max attempts
-- 🕒 Built-in timestamp management
-- 📝 Comprehensive error tracking
-- 🔎 Rich querying capabilities by namespace, status, and time ranges
-- 🏃 Concurrent webhook execution with configurable limits
-- 📦 Batch operations support
-- 📊 Detailed execution logs and metrics
+- ✅ Register webhooks to be triggered at specific times or intervals.
+- 🔁 Support for recurring webhooks with flexible intervals and configurable repeat limits.
+- 📊 Webhook status tracking (ACTIVE, PROCESSING, MAX-REPEAT-REACHED, MAX-ERRORS-REACHED, DISABLED).
+- 🔄 Automatic retries with configurable max attempts.
+- 🕒 Built-in timestamp management.
+- 📝 Comprehensive error tracking with detailed error messages and timestamps.
+- 🔎 Rich querying capabilities by namespace, status, time ranges, event patterns, and IDs.
+- 🏃 Concurrent webhook execution with configurable limits.
+- 📦 Batch operations support for efficient updates and deletions.
+- 📊 Detailed execution logs and metrics, including response body, headers, and status.
+- 🔀 Forking mechanism to create new tasks based on existing ones, with customizable forking behavior.
+- ⏱️ Configurable delay mechanism to postpone task execution, with optional debouncing for event-driven delays.
+- 🔒 Concurrency control to prevent simultaneous execution of the same task.
+- 🧪 Debugging capabilities to test task conditions against provided data.
+- 🆔 UUID generation and hashing utilities for task and fork IDs.
 
 ## 📦 Installation
 
@@ -36,14 +41,17 @@ import Hooks from 'use-dynamodb-reactive-hooks';
 
 const hooks = new Hooks({
 	accessKeyId: 'YOUR_ACCESS_KEY',
-	concurrency: 25, // Optional: default concurrent webhook execution limit
 	createTable: true, // Optional: automatically create table
 	logsTableName: 'YOUR_LOGS_TABLE_NAME',
-	logsTtlInSeconds: 86400, // Optional: TTL for log entries
-	maxErrors: 5, // Optional: max errors before marking task as FAILED
+	logsTtlInSeconds: 86400, // Optional: TTL for log entries (default: forever)
+	maxConcurrency: 25, // Optional: concurrent webhook execution limit (default: 25)
+	maxErrors: 5, // Optional: max errors before marking task as MAX-ERRORS-REACHED (default: 5)
 	region: 'us-east-1',
 	secretAccessKey: 'YOUR_SECRET_KEY',
-	tasksTableName: 'YOUR_TABLE_NAME'
+	tasksTableName: 'YOUR_TABLE_NAME',
+	webhookCaller: async (input: Hooks.CallWebhookInput) => {
+		// Optional: custom webhook caller implementation
+	}
 });
 ```
 
@@ -51,46 +59,83 @@ const hooks = new Hooks({
 
 ```typescript
 // Register a simple webhook
-const webhook = await hooks.register({
+const task = await hooks.registerTask({
 	namespace: 'my-app',
-	method: 'POST',
-	url: 'https://api.example.com/endpoint',
-	scheduledDate: new Date('2024-03-20T10:00:00Z').toISOString(),
-	request: {
-		headers: {
-			'Content-Type': 'application/json'
-		},
-		body: {
-			key: 'value'
-		}
+	requestUrl: 'https://api.example.com/endpoint',
+	scheduledDate: new Date(Date.now() + 60_000).toISOString(), // Execute in 1 minute
+	requestMethod: 'POST',
+	requestHeaders: {
+		'Content-Type': 'application/json'
+	},
+	requestBody: {
+		key: 'value'
 	}
 });
 
 // Register a recurring webhook
-const recurringWebhook = await hooks.register({
+const recurringTask = await hooks.registerTask({
 	namespace: 'my-app',
-	method: 'GET',
-	url: 'https://api.example.com/status',
-	scheduledDate: new Date('2024-03-20T10:00:00Z').toISOString(),
-	repeat: {
-		interval: 30,
-		max: 5,
-		unit: 'minutes'
-	}
+	requestUrl: 'https://api.example.com/status',
+	scheduledDate: new Date(Date.now() + 60_000).toISOString(), // Start in 1 minute
+	repeatInterval: 30, // Every 30 minutes
+	repeatMax: 5, // Repeat up to 5 times
+	repeatUnit: 'minutes'
+});
+
+// Register a webhook with event pattern for event-driven triggering
+const eventTask = await hooks.registerTask({
+	namespace: 'my-app',
+	requestUrl: 'https://api.example.com/event',
+	eventPattern: 'user-created'
+});
+
+// Register a webhook with forking to create new tasks on trigger
+const forkTask = await hooks.registerTask({
+	namespace: 'my-app',
+	requestUrl: 'https://api.example.com/fork',
+	eventPattern: 'data-updated',
+	eventDelayValue: 5, // Delay forked tasks by 5 minutes
+	eventDelayUnit: 'minutes'
+});
+
+// Register a delayed task with debouncing
+const delayedTask = await hooks.registerTask({
+	namespace: 'my-app',
+	requestUrl: 'https://api.example.com/delayed',
+	eventPattern: 'process-later',
+	eventDelayDebounce: true, // Debounce delay registration
+	eventDelayValue: 10, // Delay task execution by 10 minutes
+	eventDelayUnit: 'minutes'
 });
 ```
 
 ### Triggering Webhooks
 
 ```typescript
-// Trigger due webhooks
+// Trigger due webhooks (scheduled tasks)
 const { processed, errors } = await hooks.trigger();
 
-// Dry run to see what would be triggered
-const dryrun = await hooks.triggerDryrun({
+// Trigger webhooks matching an event pattern (event-driven tasks)
+const { processed, errors } = await hooks.trigger({
 	namespace: 'my-app',
-	limit: 100,
-	date: new Date().toISOString() // Optional: specific date
+	eventPattern: 'user-created',
+	requestBody: {
+		userId: 123
+	}
+});
+
+// Trigger a specific task by ID
+const { processed, errors } = await hooks.trigger({
+	namespace: 'my-app',
+	id: 'task-id'
+});
+
+// Trigger a fork task by ID and fork ID
+const { processed, errors } = await hooks.trigger({
+	namespace: 'my-app',
+	id: 'task-id',
+	forkId: 'fork-id-1',
+	forkOnly: true // Only register the fork, do not execute it
 });
 ```
 
@@ -98,30 +143,45 @@ const dryrun = await hooks.triggerDryrun({
 
 ```typescript
 // Fetch webhooks by namespace
-const { items, count, lastEvaluatedKey } = await hooks.fetch({
+const { items, count, lastEvaluatedKey } = await hooks.fetchTasks({
 	namespace: 'my-app',
 	limit: 100
 });
 
 // Fetch webhooks with filters
-const filteredWebhooks = await hooks.fetch({
+const filteredTasks = await hooks.fetchTasks({
 	namespace: 'my-app',
 	status: 'ACTIVE',
-	from: '2024-03-01T00:00:00Z',
-	to: '2024-03-31T23:59:59Z'
+	fromScheduledDate: new Date(Date.now() - 86400_000).toISOString(), // Last 24 hours
+	toScheduledDate: new Date().toISOString(),
+	desc: true // Sort by scheduledDate descending
 });
 
-// Get specific webhook
-const webhook = await hooks.get({
+// Fetch webhooks by event pattern
+const eventTasks = await hooks.fetchTasks({
 	namespace: 'my-app',
-	id: 'webhook-id'
+	eventPattern: 'user-',
+	eventPatternPrefix: true
+});
+
+// Get a specific webhook
+const task = await hooks.getTask({
+	namespace: 'my-app',
+	id: 'task-id'
+});
+
+// Get a specific fork webhook
+const forkTask = await hooks.getTask({
+	namespace: 'my-app',
+	id: 'fork-id-1',
+	fork: true
 });
 
 // Fetch execution logs
 const logs = await hooks.fetchLogs({
 	namespace: 'my-app',
-	from: '2024-03-01T00:00:00Z',
-	to: '2024-03-31T23:59:59Z'
+	from: new Date(Date.now() - 86400_000).toISOString(), // Last 24 hours
+	to: new Date().toISOString()
 });
 ```
 
@@ -129,95 +189,132 @@ const logs = await hooks.fetchLogs({
 
 ```typescript
 // Delete a single webhook
-const deletedWebhook = await hooks.delete({
+const deletedTask = await hooks.deleteTask({
 	namespace: 'my-app',
-	id: 'webhook-id'
+	id: 'task-id'
 });
 
-// Delete multiple webhooks based on criteria
-const { count, items } = await hooks.deleteMany({
+// Delete a fork and its associated subtasks
+const deletedForkTask = await hooks.deleteTask({
 	namespace: 'my-app',
-	status: 'DONE',
-	from: '2024-03-01T00:00:00Z',
-	to: '2024-03-31T23:59:59Z'
+	id: 'fork-id-1',
+	fork: true
+});
+
+// Update a webhook
+const updatedTask = await hooks.updateTask({
+	id: 'task-id',
+	namespace: 'my-app',
+	requestBody: {
+		key: 'updated-value'
+	},
+	repeatInterval: 60
+});
+
+// Update a fork and its associated subtasks
+const updatedForkTask = await hooks.updateTask({
+	id: 'fork-id-1',
+	namespace: 'my-app',
+	fork: true,
+	requestHeaders: {
+		'X-Custom-Header': 'newValue'
+	}
+});
+
+// Disable a webhook
+const disabledTask = await hooks.setTaskActive({
+	namespace: 'my-app',
+	id: 'task-id',
+	active: false
+});
+
+// Enable a webhook
+const enabledTask = await hooks.setTaskActive({
+	namespace: 'my-app',
+	id: 'task-id',
+	active: true
 });
 
 // Clear all webhooks in a namespace
-const { count } = await hooks.clear('my-app');
+const { count } = await hooks.clearTasks('my-app');
 
-// Suspend a single webhook (prevent it from being triggered)
-const disabledWebhook = await hooks.suspend({
+// Clear all logs in a namespace
+const { count } = await hooks.clearLogs('my-app');
+```
+
+### Debugging
+
+```typescript
+// Debug a task's condition filter against provided data
+const debugResult = await hooks.debugCondition({
 	namespace: 'my-app',
-	id: 'webhook-id'
+	id: 'task-id',
+	conditionData: {
+		key: 'value'
+	}
 });
 
-// Suspend multiple webhooks based on criteria
-const { count, items } = await hooks.suspendMany({
-	namespace: 'my-app',
-	from: '2024-03-01T00:00:00Z',
-	to: '2024-03-31T23:59:59Z',
-	chunkLimit: 100 // Optional: process in chunks
-});
-
-// Unsuspend a webhook (allow it to be triggered again)
-const undisabledWebhook = await hooks.unsuspend({
-	namespace: 'my-app',
-	id: 'webhook-id'
-});
+console.log(debugResult);
 ```
 
 ## 📋 Task Schema
 
 ```typescript
 type Task = {
-	// Required fields
-	namespace: string;
-	url: string;
-	scheduledDate: string; // ISO date string
-	method: 'GET' | 'POST' | 'PUT';
-
-	// Optional fields
-	request: {
-		headers?: Record<string, string>;
-		body?: unknown;
-		method: 'GET' | 'POST' | 'PUT';
-		url: string;
-	};
-
-	// Recurring task configuration
-	repeat?: {
-		interval: number;
-		max: number; // default: 1, 0 for infinite
-		unit: 'minutes' | 'hours' | 'days';
-	};
-
-	// System-managed fields
-	id: string;
-	idPrefix?: string;
-	status: 'ACTIVE' | 'PROCESSING' | 'DONE' | 'FAILED' | 'DISABLED';
-	retryLimit: number; // default: 3
-
-	errors: {
-		count: number;
-		firstErrorDate: string | null;
-		lastErrorDate: string | null;
-		lastError: string | null;
-	};
-
-	execution: {
-		count: number;
-		failed: number;
-		successful: number;
-		firstExecutionDate: string | null;
-		firstScheduledDate: string | null;
-		lastExecutionDate: string | null;
-		lastResponseBody: string;
-		lastResponseHeaders: Record<string, string>;
-		lastResponseStatus: number;
-	};
-
 	__createdAt: string;
 	__updatedAt: string;
+	__ts: number;
+	concurrency: boolean;
+	conditionFilter: null | {
+		defaultValue: string;
+		normalize: boolean;
+		operator: string;
+		path: string[];
+		type: string;
+		value: string;
+	};
+	description: string;
+	eventDelayDebounce: boolean;
+	eventDelayUnit: 'minutes' | 'hours' | 'days';
+	eventDelayValue: number;
+	eventPattern: string;
+	firstErrorDate: string;
+	firstExecutionDate: string;
+	firstScheduledDate: string;
+	forkId: string;
+	id: string;
+	lastError: string;
+	lastErrorDate: string;
+	lastErrorExecutionType: 'EVENT' | 'SCHEDULED';
+	lastExecutionDate: string;
+	lastExecutionType: 'EVENT' | 'SCHEDULED';
+	lastResponseBody: string;
+	lastResponseHeaders: Record<string, string> | null;
+	lastResponseStatus: number;
+	namespace: string;
+	namespace__eventPattern: string;
+	noAfter: string;
+	noBefore: string;
+	pid: string;
+	primaryId: string;
+	primaryNamespace: string;
+	repeatInterval: number;
+	repeatMax: number;
+	repeatUnit: 'minutes' | 'hours' | 'days';
+	requestBody: any;
+	requestHeaders: Record<string, string> | null;
+	requestMethod: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+	requestUrl: string;
+	rescheduleOnEvent: boolean;
+	retryLimit: number;
+	scheduledDate: string;
+	status: 'ACTIVE' | 'PROCESSING' | 'MAX-REPEAT-REACHED' | 'MAX-ERRORS-REACHED' | 'DISABLED';
+	totalErrors: number;
+	totalExecutions: number;
+	totalFailedExecutions: number;
+	totalSuccessfulExecutions: number;
+	ttl: number;
+	type: 'PRIMARY' | 'FORK' | 'SUBTASK';
 };
 ```
 
@@ -238,15 +335,21 @@ yarn test:coverage
 
 ## 📝 Notes
 
-- Failed webhooks will be retried according to the `retryLimit` configuration
-- Tasks are marked as FAILED after reaching `maxErrors` threshold (default: 5)
-- Recurring webhooks are automatically rescheduled after successful execution
-- The scheduler uses DynamoDB's GSI capabilities for efficient webhook querying
-- All timestamps are in ISO 8601 format and stored in UTC
-- Webhook execution is concurrent with configurable limits
-- Batch operations (`deleteMany` and `suspendMany`) support chunked processing for better performance
-- The `chunkLimit` parameter in batch operations allows you to control the size of each processing batch
-- Execution logs are stored in a separate table with configurable TTL
+- Failed webhooks will be retried according to the `retryLimit` configuration.
+- Tasks are marked as `MAX-ERRORS-REACHED` after reaching `maxErrors` threshold (default: 5).
+- Recurring webhooks are automatically rescheduled after successful execution.
+- The scheduler uses DynamoDB's GSI capabilities for efficient webhook querying.
+- All timestamps are in ISO 8601 format and stored in UTC.
+- Webhook execution is concurrent with configurable limits.
+- Batch operations support chunked processing for better performance.
+- The `chunkLimit` parameter in batch operations allows you to control the size of each processing batch.
+- Execution logs are stored in a separate table with configurable TTL.
+- Forking creates new tasks based on existing ones, copying relevant properties and appending `#FORK` to the namespace.
+- Subtasks are created for delayed tasks, with `type` set to `SUBTASK` and `namespace` appended with `#SUBTASK`.
+- Debouncing for delayed tasks is achieved by updating the existing subtask instead of creating a new one.
+- Concurrency control is implemented using the `pid` field and conditional updates.
+- Debugging capabilities allow testing task conditions without triggering actual webhooks.
+- UUID generation and hashing utilities are provided for task and fork IDs.
 
 ## 📄 License
 

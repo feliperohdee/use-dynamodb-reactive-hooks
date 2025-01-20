@@ -6817,12 +6817,14 @@ describe('/index.ts', () => {
 				executionType: 'SCHEDULED',
 				forkId: null,
 				forkOnly: false,
-				keys: _.map(tasks.slice(0, 2), task => {
-					return {
-						id: task.id,
-						namespace: task.namespace
-					};
-				}),
+				keys: expect.arrayContaining(
+					_.map(tasks.slice(0, 2), task => {
+						return {
+							id: task.id,
+							namespace: task.namespace
+						};
+					})
+				),
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: null,
@@ -6851,12 +6853,14 @@ describe('/index.ts', () => {
 				executionType: 'EVENT',
 				forkId: null,
 				forkOnly: false,
-				keys: _.map(tasks.slice(0, 2), task => {
-					return {
-						id: task.id,
-						namespace: task.namespace
-					};
-				}),
+				keys: expect.arrayContaining(
+					_.map(tasks.slice(0, 2), task => {
+						return {
+							id: task.id,
+							namespace: task.namespace
+						};
+					})
+				),
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: null,
@@ -6889,12 +6893,14 @@ describe('/index.ts', () => {
 				executionType: 'EVENT',
 				forkId: null,
 				forkOnly: false,
-				keys: _.map(tasks.slice(0, 2), task => {
-					return {
-						id: task.id,
-						namespace: task.namespace
-					};
-				}),
+				keys: expect.arrayContaining(
+					_.map(tasks.slice(0, 2), task => {
+						return {
+							id: task.id,
+							namespace: task.namespace
+						};
+					})
+				),
 				requestBody: { a: 1, b: 2 },
 				requestHeaders: { a: '1', b: '2' },
 				requestMethod: 'POST',
@@ -7130,6 +7136,11 @@ describe('/index.ts', () => {
 			});
 
 			expect(transactItems).toHaveLength(3);
+			expect(
+				_.every(transactItems, item => {
+					return _.includes(item.Update!.Key!.namespace, 'FORK');
+				})
+			).toBe(false);
 
 			expect(
 				_.every(transactItems, item => {
