@@ -2439,6 +2439,12 @@ describe('/index.ts', () => {
 		let forkTask: Hooks.Task;
 		let subTasks: Hooks.Task[];
 
+		const pick = (tasks: Partial<Hooks.Task>[]) => {
+			return _.map(tasks, task => {
+				return _.pick(task, ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title']);
+			});
+		};
+
 		beforeAll(async () => {
 			tasks = await Promise.all([
 				hooks.registerTask(
@@ -2496,12 +2502,13 @@ describe('/index.ts', () => {
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
+				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
 			expect(res).toEqual({
 				count: 3,
-				items: expect.arrayContaining(tasks),
+				items: expect.arrayContaining(pick(tasks)),
 				lastEvaluatedKey: null
 			});
 		});
@@ -2519,12 +2526,13 @@ describe('/index.ts', () => {
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
+				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
 			expect(res).toEqual({
 				count: 1,
-				items: expect.arrayContaining([forkTask]),
+				items: expect.arrayContaining(pick([forkTask])),
 				lastEvaluatedKey: null
 			});
 		});
@@ -2542,12 +2550,13 @@ describe('/index.ts', () => {
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
+				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
 			expect(res).toEqual({
 				count: 4,
-				items: expect.arrayContaining(subTasks),
+				items: expect.arrayContaining(pick(subTasks)),
 				lastEvaluatedKey: null
 			});
 		});
@@ -2576,12 +2585,13 @@ describe('/index.ts', () => {
 				onChunk: expect.any(Function),
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: false,
+				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
 			expect(res).toEqual({
 				count: 3,
-				items: expect.arrayContaining(tasks),
+				items: expect.arrayContaining(pick(tasks)),
 				lastEvaluatedKey: null
 			});
 		});
@@ -2606,12 +2616,13 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #id = :id',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
 				expect(res).toEqual({
 					count: 1,
-					items: expect.arrayContaining([tasks[0]]),
+					items: expect.arrayContaining(pick([tasks[0]])),
 					lastEvaluatedKey: null
 				});
 			});
@@ -2636,12 +2647,13 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #id = :id',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
 				expect(res).toEqual({
 					count: 1,
-					items: expect.arrayContaining([forkTask]),
+					items: expect.arrayContaining(pick([forkTask])),
 					lastEvaluatedKey: null
 				});
 			});
@@ -2677,6 +2689,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #id = :id',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2709,6 +2722,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #eventPattern = :eventPattern',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2740,12 +2754,13 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND begins_with(#eventPattern, :eventPattern)',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
 				expect(res).toEqual({
 					count: 3,
-					items: expect.arrayContaining(tasks),
+					items: expect.arrayContaining(pick(tasks)),
 					lastEvaluatedKey: null
 				});
 			});
@@ -2778,6 +2793,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #eventPattern = :eventPattern',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2812,6 +2828,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2847,6 +2864,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
 					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -3707,6 +3725,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -3791,6 +3810,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -3949,6 +3969,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -4033,6 +4054,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -4139,6 +4161,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -4223,6 +4246,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -4362,6 +4386,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`,
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 0,
 					totalFailedExecutions: 0,
@@ -4424,6 +4449,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`,
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
@@ -4648,6 +4674,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: '-',
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
@@ -4710,6 +4737,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: `${currentYear + 1}-01-01T03:00:00.000Z`,
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
@@ -5494,6 +5522,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 1,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
@@ -5600,6 +5629,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 1,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
@@ -5717,6 +5747,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'MAX-ERRORS-REACHED',
+				title: '',
 				totalErrors: 1,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
@@ -5960,6 +5991,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 1,
 				totalFailedExecutions: 0,
@@ -6082,6 +6114,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 1,
 				totalFailedExecutions: 0,
@@ -6213,6 +6246,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 1,
 				totalFailedExecutions: 1,
@@ -6343,6 +6377,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 1,
 				totalFailedExecutions: 0,
@@ -6473,6 +6508,7 @@ describe('/index.ts', () => {
 				retryLimit: 3,
 				scheduledDate: expect.any(String),
 				status: 'MAX-REPEAT-REACHED',
+				title: '',
 				totalErrors: 0,
 				totalExecutions: 1,
 				totalFailedExecutions: 0,
@@ -6627,6 +6663,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 1,
 					totalFailedExecutions: 0,
@@ -6757,6 +6794,7 @@ describe('/index.ts', () => {
 					retryLimit: 3,
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
+					title: '',
 					totalErrors: 0,
 					totalExecutions: 1,
 					totalFailedExecutions: 0,
@@ -7110,7 +7148,8 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything-2',
 				rescheduleOnEvent: !task.rescheduleOnEvent,
 				retryLimit: task.retryLimit + 1,
-				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`
+				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`,
+				title: 'updated'
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledOnce();
@@ -7165,6 +7204,7 @@ describe('/index.ts', () => {
 							'#retryLimit': 'retryLimit',
 							'#scheduledDate': 'scheduledDate',
 							'#ts': '__ts',
+							'#title': 'title',
 							'#updatedAt': '__updatedAt'
 						}) &&
 						_.isEqual(item.Update!.ExpressionAttributeValues, {
@@ -7193,6 +7233,7 @@ describe('/index.ts', () => {
 							':rescheduleOnEvent': false,
 							':retryLimit': 4,
 							':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
+							':title': 'updated',
 							':ts': item.Update!.ExpressionAttributeValues![':ts'],
 							':updatedAt': item.Update!.ExpressionAttributeValues![':updatedAt']
 						}) &&
@@ -7217,7 +7258,8 @@ describe('/index.ts', () => {
 								'#requestUrl = :requestUrl',
 								'#rescheduleOnEvent = :rescheduleOnEvent',
 								'#retryLimit = :retryLimit',
-								'#scheduledDate = :scheduledDate'
+								'#scheduledDate = :scheduledDate',
+								'#title = :title'
 							].join(', ')}`
 					);
 				})
@@ -7283,7 +7325,8 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything-2',
 				rescheduleOnEvent: !task.rescheduleOnEvent,
 				retryLimit: task.retryLimit + 1,
-				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`
+				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`,
+				title: 'updated'
 			});
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledOnce();
@@ -7321,7 +7364,8 @@ describe('/index.ts', () => {
 								'#requestUrl': 'requestUrl',
 								'#rescheduleOnEvent': 'rescheduleOnEvent',
 								'#retryLimit': 'retryLimit',
-								'#scheduledDate': 'scheduledDate'
+								'#scheduledDate': 'scheduledDate',
+								'#title': 'title'
 							},
 							ExpressionAttributeValues: {
 								':ts': expect.any(Number),
@@ -7356,7 +7400,8 @@ describe('/index.ts', () => {
 								':requestUrl': 'https://httpbin.org/anything-2',
 								':rescheduleOnEvent': false,
 								':retryLimit': 4,
-								':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`
+								':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
+								':title': 'updated'
 							},
 							Key: {
 								// @ts-expect-error
@@ -7384,7 +7429,8 @@ describe('/index.ts', () => {
 								'#requestUrl = :requestUrl',
 								'#rescheduleOnEvent = :rescheduleOnEvent',
 								'#retryLimit = :retryLimit',
-								'#scheduledDate = :scheduledDate'
+								'#scheduledDate = :scheduledDate',
+								'#title = :title'
 							].join(', ')}`
 						}
 					}

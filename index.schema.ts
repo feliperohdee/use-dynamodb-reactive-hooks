@@ -72,6 +72,7 @@ const task = z.object({
 	totalExecutions: z.number(),
 	totalFailedExecutions: z.number(),
 	totalSuccessfulExecutions: z.number(),
+	title: z.string(),
 	ttl: z.number().min(0),
 	type: taskType
 });
@@ -131,7 +132,8 @@ const taskInput = task
 		requestHeaders: true,
 		requestMethod: true,
 		rescheduleOnEvent: true,
-		scheduledDate: true
+		scheduledDate: true,
+		title: true
 	})
 	.refine(
 		data => {
@@ -178,7 +180,8 @@ const deleteInput = z.object({
 	namespace: z.string()
 });
 
-const fetchInput = z
+const fetchLogsInput = Webhooks.schema.fetchLogsInput;
+const fetchTasksInput = z
 	.object({
 		chunkLimit: z.number().min(1).optional(),
 		desc: z.boolean().default(false),
@@ -194,7 +197,17 @@ const fetchInput = z
 			.args(
 				z.object({
 					count: z.number(),
-					items: z.array(task)
+					items: z.array(
+						task.pick({
+							description: true,
+							eventPattern: true,
+							id: true,
+							namespace: true,
+							scheduledDate: true,
+							status: true,
+							title: true
+						})
+					)
 				})
 			)
 			.returns(z.promise(z.void()))
@@ -218,7 +231,22 @@ const fetchInput = z
 		}
 	);
 
-const fetchLogsInput = Webhooks.schema.fetchLogsInput;
+const fetchTasksResponse = z.object({
+	count: z.number(),
+	items: z.array(
+		task.pick({
+			description: true,
+			eventPattern: true,
+			id: true,
+			namespace: true,
+			scheduledDate: true,
+			status: true,
+			title: true
+		})
+	),
+	lastEvaluatedKey: z.record(z.any()).nullable()
+});
+
 const getTaskInput = z.object({
 	fork: z.boolean().default(false),
 	id: z.string(),
@@ -338,7 +366,8 @@ const updateTaskInput = z
 		requestUrl: z.string().url().optional(),
 		rescheduleOnEvent: z.boolean().optional(),
 		retryLimit: z.number().min(0).optional(),
-		scheduledDate: z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past').optional()
+		scheduledDate: z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past').optional(),
+		title: z.string().optional()
 	})
 	.refine(
 		data => {
@@ -359,8 +388,9 @@ export default {
 	checkExecuteTaskInput,
 	debugConditionInput,
 	deleteInput,
-	fetchInput,
 	fetchLogsInput,
+	fetchTasksInput,
+	fetchTasksResponse,
 	getTaskInput,
 	log,
 	queryActiveTasksInput,

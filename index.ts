@@ -35,8 +35,9 @@ namespace Hooks {
 	export type CheckExecuteTaskInput = z.input<typeof schema.checkExecuteTaskInput>;
 	export type DebugConditionInput = z.input<typeof schema.debugConditionInput>;
 	export type DeleteInput = z.input<typeof schema.deleteInput>;
-	export type FetchInput = z.input<typeof schema.fetchInput>;
 	export type FetchLogsInput = z.input<typeof schema.fetchLogsInput>;
+	export type FetchTasksInput = z.input<typeof schema.fetchTasksInput>;
+	export type FetchTasksResponse = z.infer<typeof schema.fetchTasksResponse>;
 	export type GetTaskInput = z.input<typeof schema.getTaskInput>;
 	export type Log = z.infer<typeof schema.log>;
 	export type QueryActiveTasksInput = z.input<typeof schema.queryActiveTasksInput>;
@@ -86,6 +87,10 @@ class Hooks {
 					name: 'namespace-event-pattern',
 					partition: 'namespace',
 					partitionType: 'S',
+					projection: {
+						nonKeyAttributes: ['description', 'eventPattern', 'scheduledDate', 'status', 'title'],
+						type: 'INCLUDE'
+					},
 					sort: 'eventPattern',
 					sortType: 'S'
 				},
@@ -94,6 +99,10 @@ class Hooks {
 					name: 'namespace-scheduled-date',
 					partition: 'namespace',
 					partitionType: 'S',
+					projection: {
+						nonKeyAttributes: ['description', 'eventPattern', 'scheduledDate', 'status', 'title'],
+						type: 'INCLUDE'
+					},
 					sort: 'scheduledDate',
 					sortType: 'S'
 				},
@@ -548,8 +557,8 @@ class Hooks {
 		return this.webhooks.fetchLogs(input);
 	}
 
-	async fetchTasks(input: Hooks.FetchInput): Promise<Dynamodb.MultiResponse<Hooks.Task, false>> {
-		let args = await schema.fetchInput.parseAsync(input);
+	async fetchTasks(input: Hooks.FetchTasksInput): Promise<Hooks.FetchTasksResponse> {
+		let args = await schema.fetchTasksInput.parseAsync(input);
 		let namespace = args.namespace;
 
 		if (args.fork) {
@@ -567,6 +576,7 @@ class Hooks {
 			limit: args.limit,
 			queryExpression: '',
 			scanIndexForward: args.desc ? false : true,
+			select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 			startKey: args.startKey
 		};
 
@@ -579,12 +589,7 @@ class Hooks {
 		const query = async (options: Dynamodb.QueryOptions<Hooks.Task>) => {
 			options.filterExpression = _.values(filters).filter(Boolean).join(' AND ');
 
-			const res = await this.db.tasks.query(options);
-
-			return {
-				...res,
-				items: _.map(res.items, taskShape)
-			};
+			return this.db.tasks.query(options);
 		};
 
 		if (args.chunkLimit) {
@@ -1625,7 +1630,8 @@ class Hooks {
 			'requestUrl',
 			'rescheduleOnEvent',
 			'retryLimit',
-			'scheduledDate'
+			'scheduledDate',
+			'title'
 		]);
 
 		let updateAttributes = _.reduce(
