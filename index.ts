@@ -1443,8 +1443,7 @@ class Hooks {
 		}
 	}
 
-	async trigger(input?: Hooks.TriggerInput): Promise<{ processed: number; errors: number }> {
-		let date = new Date();
+	async trigger(input?: Hooks.TriggerInput, date = new Date()): Promise<{ processed: number; errors: number }> {
 		let result = { processed: 0, errors: 0 };
 		let queryActiveTasksOptions: Hooks.QueryActiveTasksInput = {
 			date,

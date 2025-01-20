@@ -35,5 +35,5 @@
 		"test": "./.test.sh",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.7"
+	"version": "1.0.8"
 }
