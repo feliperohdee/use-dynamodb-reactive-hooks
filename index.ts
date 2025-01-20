@@ -88,7 +88,7 @@ class Hooks {
 					partition: 'namespace',
 					partitionType: 'S',
 					projection: {
-						nonKeyAttributes: ['description', 'eventPattern', 'scheduledDate', 'status', 'title'],
+						nonKeyAttributes: ['description', 'eventPattern', 'forkId', 'scheduledDate', 'status', 'title'],
 						type: 'INCLUDE'
 					},
 					sort: 'eventPattern',
@@ -100,7 +100,7 @@ class Hooks {
 					partition: 'namespace',
 					partitionType: 'S',
 					projection: {
-						nonKeyAttributes: ['description', 'eventPattern', 'scheduledDate', 'status', 'title'],
+						nonKeyAttributes: ['description', 'eventPattern', 'forkId', 'scheduledDate', 'status', 'title'],
 						type: 'INCLUDE'
 					},
 					sort: 'scheduledDate',
@@ -452,7 +452,7 @@ class Hooks {
 		return UseFilterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<UseFilterCriteria.MatchDetailedResult>;
 	}
 
-	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task | null> {
+	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task> {
 		const args = await schema.deleteInput.parseAsync(input);
 		const task = await this.getTaskInternal(
 			args.fork
@@ -467,7 +467,7 @@ class Hooks {
 		);
 
 		if (!task) {
-			return null;
+			throw new TaskException('Task not found');
 		}
 
 		if (task.type !== 'PRIMARY' && task.type !== 'FORK') {
@@ -575,7 +575,7 @@ class Hooks {
 			limit: args.limit,
 			queryExpression: '',
 			scanIndexForward: args.desc ? false : true,
-			select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+			select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 			startKey: args.startKey
 		};
 
@@ -735,7 +735,7 @@ class Hooks {
 		return parentTask;
 	}
 
-	async getTask(input: Hooks.GetTaskInput): Promise<Hooks.Task | null> {
+	async getTask(input: Hooks.GetTaskInput): Promise<Hooks.Task> {
 		const args = await schema.getTaskInput.parseAsync(input);
 
 		let [id, namespace] = [args.id, args.namespace];
@@ -749,7 +749,11 @@ class Hooks {
 			item: { namespace, id }
 		});
 
-		return res ? taskShape(res) : null;
+		if (!res) {
+			throw new TaskException('Task not found');
+		}
+
+		return taskShape(res);
 	}
 
 	private async getTaskInternal(input: Hooks.GetTaskInput, consistentRead: boolean = false): Promise<Hooks.Task | null> {

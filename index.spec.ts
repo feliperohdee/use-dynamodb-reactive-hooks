@@ -1961,6 +1961,20 @@ describe('/index.ts', () => {
 			await hooks.clearTasks('spec');
 		});
 
+		it('should throw if task is not found', async () => {
+			try {
+				await hooks.deleteTask({
+					id: 'non-existent-id',
+					namespace: 'spec'
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Task not found');
+			}
+		});
+
 		it('should delete', async () => {
 			// @ts-expect-error
 			const forkTask1 = await hooks.registerForkTask({
@@ -2399,15 +2413,6 @@ describe('/index.ts', () => {
 				expect(err.message).toEqual('Task must be a primary or fork task');
 			}
 		});
-
-		it('should return null if inexistent', async () => {
-			const res = await hooks.deleteTask({
-				id: 'non-existent-id',
-				namespace: 'spec'
-			});
-
-			expect(res).toBeNull();
-		});
 	});
 
 	describe('fetchLogs', () => {
@@ -2441,7 +2446,7 @@ describe('/index.ts', () => {
 
 		const pick = (tasks: Partial<Hooks.Task>[]) => {
 			return _.map(tasks, task => {
-				return _.pick(task, ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title']);
+				return _.pick(task, ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title']);
 			});
 		};
 
@@ -2502,7 +2507,7 @@ describe('/index.ts', () => {
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
-				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+				select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
@@ -2526,7 +2531,7 @@ describe('/index.ts', () => {
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
-				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+				select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
@@ -2550,7 +2555,7 @@ describe('/index.ts', () => {
 				limit: 100,
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: true,
-				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+				select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
@@ -2585,7 +2590,7 @@ describe('/index.ts', () => {
 				onChunk: expect.any(Function),
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: false,
-				select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+				select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 				startKey: null
 			});
 
@@ -2616,7 +2621,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #id = :id',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2647,7 +2652,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #id = :id',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2689,7 +2694,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #id = :id',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2722,7 +2727,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #eventPattern = :eventPattern',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2754,7 +2759,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND begins_with(#eventPattern, :eventPattern)',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2793,7 +2798,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #eventPattern = :eventPattern',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2828,7 +2833,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -2864,7 +2869,7 @@ describe('/index.ts', () => {
 					limit: 100,
 					queryExpression: '#namespace = :namespace AND #scheduledDate BETWEEN :fromScheduledDate AND :toScheduledDate',
 					scanIndexForward: true,
-					select: ['description', 'eventPattern', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
 					startKey: null
 				});
 
@@ -3004,6 +3009,20 @@ describe('/index.ts', () => {
 			await hooks.clearTasks('spec');
 		});
 
+		it('should throw if task is not found', async () => {
+			try {
+				await hooks.getTask({
+					id: 'non-existent-id',
+					namespace: 'spec'
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Task not found');
+			}
+		});
+
 		it('should get', async () => {
 			const res = await hooks.getTask({
 				id: task.id,
@@ -3035,22 +3054,6 @@ describe('/index.ts', () => {
 			});
 
 			expect(res).toEqual(forkTask);
-		});
-
-		it('should return null if inexistent', async () => {
-			const res = await hooks.getTask({
-				id: 'non-existent-id',
-				namespace: 'spec'
-			});
-
-			expect(hooks.db.tasks.get).toHaveBeenCalledWith({
-				item: {
-					id: 'non-existent-id',
-					namespace: 'spec'
-				}
-			});
-
-			expect(res).toBeNull();
 		});
 	});
 
