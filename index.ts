@@ -514,7 +514,7 @@ class Hooks {
 				return reduction;
 			},
 			keys,
-			DEFAULT_MAX_CONCURRENCY
+			this.maxConcurrency
 		);
 
 		let promiseTasks: (() => Promise<TransactWriteCommandOutput[]>)[] = [];
@@ -1098,7 +1098,7 @@ class Hooks {
 				return reduction;
 			},
 			keys,
-			DEFAULT_MAX_CONCURRENCY
+			this.maxConcurrency
 		);
 
 		let promiseTasks: (() => Promise<TransactWriteCommandOutput[]>)[] = [];
