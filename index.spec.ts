@@ -5401,6 +5401,38 @@ describe('/index.ts', () => {
 				expect(err.message).toEqual('Task is not in a valid state');
 			}
 		});
+
+		it('should throw try to enable and task have reached repeat max', async () => {
+			await hooks.db.tasks.update({
+				attributeNames: {
+					'#repeatMax': 'repeatMax',
+					'#status': 'status',
+					'#totalExecutions': 'totalExecutions'
+				},
+				attributeValues: {
+					':repeatMax': 1,
+					':status': 'DISABLED',
+					':totalExecutions': 1
+				},
+				filter: {
+					item: { id: task.id, namespace: 'spec' }
+				},
+				updateExpression: 'SET #repeatMax = :repeatMax, #status = :status, #totalExecutions = :totalExecutions'
+			});
+
+			try {
+				await hooks.setTaskActive({
+					active: true,
+					id: task.id,
+					namespace: 'spec'
+				});
+
+				throw new Error('Expected to throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TaskException);
+				expect(err.message).toEqual('Task has reached the repeat max');
+			}
+		});
 	});
 
 	describe('setTaskError', () => {

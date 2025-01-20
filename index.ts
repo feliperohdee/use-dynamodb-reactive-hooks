@@ -1052,6 +1052,10 @@ class Hooks {
 			throw new TaskException('Task is not in a valid state');
 		}
 
+		if (status === 'ACTIVE' && task.repeatMax > 0 && task.totalExecutions >= task.repeatMax) {
+			throw new TaskException('Task has reached the repeat max');
+		}
+
 		let keys: (Hooks.TaskKeys & { type: Hooks.TaskType })[] = [];
 
 		keys = await promiseReduce(
@@ -1712,7 +1716,11 @@ class Hooks {
 
 		const hashBuffer = await crypto.subtle.digest('SHA-256', data);
 		const hashArray = Array.from(new Uint8Array(hashBuffer));
-		const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+		const hashHex = hashArray
+			.map(b => {
+				return b.toString(16).padStart(2, '0');
+			})
+			.join('');
 		const uuidBytes = hashHex.slice(0, 32);
 
 		// Format to 8-4-4-4-12
