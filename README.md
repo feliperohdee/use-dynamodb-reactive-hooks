@@ -1,6 +1,6 @@
-# Use DynamoDB Reactive Hooks
+⚡️ Use DynamoDB Reactive Hooks ⚡️
 
-A TypeScript library that provides a webhook scheduling system using Amazon DynamoDB as the backend. Schedule HTTP webhooks to be triggered at specific times or intervals, with full management and monitoring capabilities.
+A powerful TypeScript library for orchestrating dynamic, event-driven, and scheduled webhook workflows, leveraging the speed and scalability of DynamoDB. Go beyond basic cron-like scheduling with advanced features like delayed execution, event-based triggering, forking, debouncing, concurrency control, and robust error handling. Build reactive, resilient, and scalable applications with ease.
 
 [![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vitest](https://img.shields.io/badge/-Vitest-729B1B?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
