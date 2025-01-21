@@ -1,6 +1,6 @@
 import _ from 'lodash';
-import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { promiseAllSettled, promiseMap, promiseReduce } from 'use-async-helpers';
+import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { promiseAllSettled, promiseReduce } from 'use-async-helpers';
 import { TransactWriteCommandOutput } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import HttpError from 'use-http-error';
