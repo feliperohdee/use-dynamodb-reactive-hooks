@@ -1841,10 +1841,10 @@ use-dynamodb@^1.0.59:
     lodash "^4.17.21"
     use-async-helpers "^1.0.21"
 
-use-filter-criteria@^1.0.18:
-  version "1.0.18"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.18.tgz#92308e6d28683608171171a3095b058b3d2b316c"
-  integrity sha512-LGJyo9dKzJzuaN4uELov3WXpMCIcOiy+zwNNrDeXEJnoxI7far1Le8wpdJvYDM9bkaZOt6656E7DK735zzpygw==
+use-filter-criteria@^1.0.19:
+  version "1.0.19"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.19.tgz#c5dd560e29c3e51e03a4f2db21a069409a02e16b"
+  integrity sha512-QRjxrCRlIkLbQL3lP4e6/hfvZIpTvoRxX4Gl6DcSj8sLh8gyszL1R8LZNGJpfZVANbp/Q3mUeBC73DaIA5438g==
   dependencies:
     lodash "^4.17.21"
     zod "^3.24.1"
