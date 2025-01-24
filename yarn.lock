@@ -1841,13 +1841,15 @@ use-dynamodb@^1.0.59:
     lodash "^4.17.21"
     use-async-helpers "^1.0.21"
 
-use-filter-criteria@^1.0.19:
-  version "1.0.19"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.19.tgz#c5dd560e29c3e51e03a4f2db21a069409a02e16b"
-  integrity sha512-QRjxrCRlIkLbQL3lP4e6/hfvZIpTvoRxX4Gl6DcSj8sLh8gyszL1R8LZNGJpfZVANbp/Q3mUeBC73DaIA5438g==
+use-filter-criteria@^1.0.26:
+  version "1.0.26"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.26.tgz#a166877e9aab6ed04a874c820513a6fe6d0b82e4"
+  integrity sha512-cyfzN3vCzSAvag2Gjz4iNvt8T6EX63n3eVLgo7W78WJtRee25grMx4rfw3BLKX99zUGinhtYTiRYyvdL3jHtkw==
   dependencies:
     lodash "^4.17.21"
+    use-async-helpers "^1.0.24"
     zod "^3.24.1"
+    zod-default-instance "^1.0.17"
 
 use-http-error@^1.0.1:
   version "1.0.2"
@@ -1956,6 +1958,13 @@ zod-default-instance@^1.0.12, zod-default-instance@^1.0.15:
   version "1.0.15"
   resolved "https://registry.yarnpkg.com/zod-default-instance/-/zod-default-instance-1.0.15.tgz#da51df1353af25726f246ae71276b713f7dfa971"
   integrity sha512-7nnZWssRIZuZuWt41ODbD2D4s1OsLZlQd+Ya0kCQk7Ao/si7pNtx8YEK5KZ4ZOHd0/5insU1AuILL1aD2jufSg==
+  dependencies:
+    zod "^3.23.8"
+
+zod-default-instance@^1.0.17:
+  version "1.0.17"
+  resolved "https://registry.yarnpkg.com/zod-default-instance/-/zod-default-instance-1.0.17.tgz#f1d5eec5a0347c8414c3b8c14f789443e8b60621"
+  integrity sha512-kAddNDq7YTJzEswbYb7HJYWvKY5QY5EVxNMRSgSsKFSkeaeJft1gGbginQsnKaA/K3yCJP2Ts6tJgjiq/jhSkQ==
   dependencies:
     zod "^3.23.8"
 

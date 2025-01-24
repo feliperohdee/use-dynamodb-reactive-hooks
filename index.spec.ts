@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import z from 'zod';
 
@@ -381,7 +381,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -421,10 +422,10 @@ describe('/index.ts', () => {
 				expect.objectContaining({
 					executionType: 'EVENT',
 					log: expect.objectContaining({
-						requestBody: { a: 1 },
-						requestHeaders: { a: '1' },
-						requestMethod: 'POST',
-						requestUrl: 'https://httpbin.org/anything'
+						responseBody: expect.any(String),
+						responseHeaders: expect.any(Object),
+						responseOk: true,
+						responseStatus: 200
 					}),
 					pid: expect.any(String),
 					task: {
@@ -469,7 +470,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -509,10 +511,10 @@ describe('/index.ts', () => {
 				expect.objectContaining({
 					executionType: 'EVENT',
 					log: expect.objectContaining({
-						requestBody: { a: 1 },
-						requestHeaders: { a: '1' },
-						requestMethod: 'POST',
-						requestUrl: 'https://httpbin.org/anything'
+						responseBody: expect.any(String),
+						responseHeaders: expect.any(Object),
+						responseOk: true,
+						responseStatus: 200
 					}),
 					pid: expect.any(String),
 					task: {
@@ -547,10 +549,10 @@ describe('/index.ts', () => {
 			task = await hooks.registerTask(
 				createTestTask(0, {
 					conditionFilter: {
+						matchValue: 'value',
 						operator: 'EQUALS',
-						path: ['key'],
 						type: 'STRING',
-						value: 'value'
+						valuePath: ['key']
 					}
 				})
 			);
@@ -568,7 +570,8 @@ describe('/index.ts', () => {
 				requestBody: { b: 2 },
 				requestHeaders: { b: '2' },
 				requestMethod: 'GET',
-				requestUrl: 'https://httpbin.org/custom'
+				requestUrl: 'https://httpbin.org/custom',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -608,10 +611,10 @@ describe('/index.ts', () => {
 				expect.objectContaining({
 					executionType: 'EVENT',
 					log: expect.objectContaining({
-						requestBody: { a: 1, b: 2 },
-						requestHeaders: { a: '1', b: '2' },
-						requestMethod: 'GET',
-						requestUrl: 'https://httpbin.org/custom?a=1&b=2'
+						responseBody: expect.any(String),
+						responseHeaders: expect.any(Object),
+						responseOk: true,
+						responseStatus: 200
 					}),
 					pid: expect.any(String),
 					task: {
@@ -619,10 +622,6 @@ describe('/index.ts', () => {
 						__ts: expect.any(Number),
 						__updatedAt: expect.any(String),
 						pid: expect.any(String),
-						requestBody: { a: 1, b: 2 },
-						requestHeaders: { a: '1', b: '2' },
-						requestMethod: 'GET',
-						requestUrl: 'https://httpbin.org/custom',
 						status: 'PROCESSING'
 					}
 				})
@@ -639,10 +638,6 @@ describe('/index.ts', () => {
 					lastResponseBody: expect.any(String),
 					lastResponseHeaders: expect.any(Object),
 					lastResponseStatus: 200,
-					requestBody: { a: 1, b: 2 },
-					requestHeaders: { a: '1', b: '2' },
-					requestMethod: 'GET',
-					requestUrl: 'https://httpbin.org/custom',
 					scheduledDate: expect.any(String),
 					totalExecutions: 1,
 					totalSuccessfulExecutions: 1
@@ -654,10 +649,10 @@ describe('/index.ts', () => {
 			task = await hooks.registerTask(
 				createTestTask(0, {
 					conditionFilter: {
+						matchValue: 'value',
 						operator: 'EQUALS',
-						path: ['key'],
 						type: 'STRING',
-						value: 'value'
+						valuePath: ['key']
 					}
 				})
 			);
@@ -676,7 +671,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				}),
 				hooks.callWebhook({
 					conditionData: null,
@@ -691,7 +687,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				})
 			]);
 
@@ -740,7 +737,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -776,10 +774,10 @@ describe('/index.ts', () => {
 			expect(hooks.setTaskSuccess).toHaveBeenCalledWith({
 				executionType: 'EVENT',
 				log: expect.objectContaining({
-					requestBody: { a: 1 },
-					requestHeaders: { a: '1' },
-					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					responseBody: expect.any(String),
+					responseHeaders: expect.any(Object),
+					responseOk: true,
+					responseStatus: 200
 				}),
 				pid: expect.any(String),
 				task
@@ -817,7 +815,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -861,7 +860,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -902,7 +902,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -931,7 +932,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
 			});
 
 			// @ts-expect-error
@@ -1009,7 +1011,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1045,7 +1048,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1100,10 +1104,10 @@ describe('/index.ts', () => {
 					expect.objectContaining({
 						executionType: 'EVENT',
 						log: expect.objectContaining({
-							requestBody: { a: 1 },
-							requestHeaders: { a: '1' },
-							requestMethod: 'POST',
-							requestUrl: 'https://httpbin.org/anything'
+							responseBody: expect.any(String),
+							responseHeaders: expect.any(Object),
+							responseOk: true,
+							responseStatus: 200
 						}),
 						pid: expect.any(String),
 						task: {
@@ -1150,7 +1154,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1190,7 +1195,8 @@ describe('/index.ts', () => {
 					requestBody: { b: 2 },
 					requestHeaders: { b: '2' },
 					requestMethod: 'GET',
-					requestUrl: 'https://httpbin.org/custom'
+					requestUrl: 'https://httpbin.org/custom',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1244,10 +1250,10 @@ describe('/index.ts', () => {
 					expect.objectContaining({
 						executionType: 'EVENT',
 						log: expect.objectContaining({
-							requestBody: { a: 1, b: 2 },
-							requestHeaders: { a: '1', b: '2' },
-							requestMethod: 'GET',
-							requestUrl: 'https://httpbin.org/custom?a=1&b=2'
+							responseBody: expect.any(String),
+							responseHeaders: expect.any(Object),
+							responseOk: true,
+							responseStatus: 200
 						}),
 						pid: expect.any(String),
 						task: {
@@ -1256,11 +1262,7 @@ describe('/index.ts', () => {
 							__ts: expect.any(Number),
 							__updatedAt: expect.any(String),
 							pid: expect.any(String),
-							status: 'PROCESSING',
-							requestBody: { a: 1, b: 2 },
-							requestHeaders: { a: '1', b: '2' },
-							requestMethod: 'GET',
-							requestUrl: 'https://httpbin.org/custom'
+							status: 'PROCESSING'
 						}
 					})
 				);
@@ -1283,10 +1285,6 @@ describe('/index.ts', () => {
 						namespace: 'spec#FORK',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
-						requestBody: { a: 1, b: 2 },
-						requestHeaders: { a: '1', b: '2' },
-						requestMethod: 'GET',
-						requestUrl: 'https://httpbin.org/custom',
 						scheduledDate: expect.any(String),
 						totalExecutions: 1,
 						totalSuccessfulExecutions: 1,
@@ -1333,7 +1331,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1369,7 +1368,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1431,7 +1431,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1487,7 +1488,8 @@ describe('/index.ts', () => {
 					requestBody: { b: 2 },
 					requestHeaders: { b: '2' },
 					requestMethod: 'GET',
-					requestUrl: 'https://httpbin.org/custom'
+					requestUrl: 'https://httpbin.org/custom',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1583,7 +1585,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1619,7 +1622,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1659,10 +1663,10 @@ describe('/index.ts', () => {
 					expect.objectContaining({
 						executionType: 'SCHEDULED',
 						log: expect.objectContaining({
-							requestBody: { a: 1 },
-							requestHeaders: { a: '1' },
-							requestMethod: 'POST',
-							requestUrl: 'https://httpbin.org/anything'
+							responseBody: expect.any(String),
+							responseHeaders: expect.any(Object),
+							responseOk: true,
+							responseStatus: 200
 						}),
 						pid: expect.any(String),
 						task: {
@@ -1707,7 +1711,8 @@ describe('/index.ts', () => {
 					requestBody: null,
 					requestHeaders: null,
 					requestMethod: 'POST',
-					requestUrl: 'https://httpbin.org/anything'
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
 				});
 
 				// @ts-expect-error
@@ -1747,10 +1752,10 @@ describe('/index.ts', () => {
 					expect.objectContaining({
 						executionType: 'SCHEDULED',
 						log: expect.objectContaining({
-							requestBody: { a: 1 },
-							requestHeaders: { a: '1' },
-							requestMethod: 'POST',
-							requestUrl: 'https://httpbin.org/anything'
+							responseBody: expect.any(String),
+							responseHeaders: expect.any(Object),
+							responseOk: true,
+							responseStatus: 200
 						}),
 						pid: expect.any(String),
 						task: {
@@ -1771,6 +1776,335 @@ describe('/index.ts', () => {
 						firstExecutionDate: expect.any(String),
 						lastExecutionDate: expect.any(String),
 						lastExecutionType: 'SCHEDULED',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						scheduledDate: expect.any(String),
+						totalExecutions: 1,
+						totalSuccessfulExecutions: 1
+					}
+				]);
+			});
+		});
+
+		describe('execute rules', () => {
+			let rule1: Mock;
+			let rule2: Mock;
+
+			beforeEach(() => {
+				// @ts-expect-error
+				vi.mocked(global.fetch).mockResolvedValueOnce({
+					ok: false,
+					status: 400
+				});
+
+				rule1 = vi.fn(async () => {
+					return _.times(5, i => {
+						return {
+							requestBody: { a: i },
+							requestHeaders: { a: `a-${i}` },
+							requestMethod: 'GET',
+							requestUrl: 'https://httpbin.org/rule'
+						};
+					});
+				});
+
+				rule2 = vi.fn(async () => {
+					return _.times(5, i => {
+						return {
+							requestBody: null,
+							requestHeaders: null,
+							requestMethod: null,
+							requestUrl: null
+						};
+					});
+				});
+
+				hooks.registerRule('rule-id-1', rule1);
+				hooks.registerRule('rule-id-2', rule2);
+			});
+
+			it('should execute', async () => {
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: 'rule-id-1'
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.registerDelayedSubTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getSubTaskParent).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					task
+				});
+				// @ts-expect-error
+				expect(hooks.setTaskLock).toHaveBeenCalledWith({
+					pid: expect.any(String),
+					task
+				});
+				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
+				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					metadata: {
+						executionType: 'EVENT',
+						forkId: '',
+						taskId: task.id,
+						taskType: 'PRIMARY'
+					},
+					namespace: 'spec',
+					requestBody: { a: 4 },
+					requestHeaders: { a: 'a-4' },
+					requestMethod: 'GET',
+					requestUrl: 'https://httpbin.org/rule',
+					retryLimit: 3
+				});
+
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+					expect.objectContaining({
+						executionType: 'EVENT',
+						log: expect.objectContaining({
+							responseBody: JSON.stringify({
+								totalExecutions: 5,
+								totalFailedExecutions: 1,
+								totalSuccessfulExecutions: 4
+							}),
+							responseHeaders: {},
+							responseOk: true,
+							responseStatus: 200
+						}),
+						pid: expect.any(String),
+						task: {
+							...task,
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							pid: expect.any(String),
+							status: 'PROCESSING'
+						}
+					})
+				);
+
+				expect(res).toEqual([
+					{
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						firstExecutionDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'EVENT',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						scheduledDate: expect.any(String),
+						totalExecutions: 1,
+						totalSuccessfulExecutions: 1
+					}
+				]);
+			});
+
+			it('should execute with task.ruleId', async () => {
+				await hooks.db.tasks.update({
+					attributeNames: { '#ruleId': 'ruleId' },
+					attributeValues: { ':ruleId': 'rule-id-2' },
+					filter: {
+						item: { id: task.id, namespace: 'spec' }
+					},
+					updateExpression: 'SET #ruleId = :ruleId'
+				});
+
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: null
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.registerDelayedSubTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getSubTaskParent).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					task: {
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						ruleId: 'rule-id-2'
+					}
+				});
+				// @ts-expect-error
+				expect(hooks.setTaskLock).toHaveBeenCalledWith({
+					pid: expect.any(String),
+					task: {
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						ruleId: 'rule-id-2'
+					}
+				});
+				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
+				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					metadata: {
+						executionType: 'EVENT',
+						forkId: '',
+						taskId: task.id,
+						taskType: 'PRIMARY'
+					},
+					namespace: 'spec',
+					requestBody: { a: 1 },
+					requestHeaders: { a: '1' },
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything',
+					retryLimit: 3
+				});
+
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+					expect.objectContaining({
+						executionType: 'EVENT',
+						log: expect.objectContaining({
+							responseBody: JSON.stringify({
+								totalExecutions: 5,
+								totalFailedExecutions: 1,
+								totalSuccessfulExecutions: 4
+							}),
+							responseHeaders: {},
+							responseOk: true,
+							responseStatus: 200
+						}),
+						pid: expect.any(String),
+						task: {
+							...task,
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							pid: expect.any(String),
+							ruleId: 'rule-id-2',
+							status: 'PROCESSING'
+						}
+					})
+				);
+
+				expect(res).toEqual([
+					{
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						firstExecutionDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'EVENT',
+						lastResponseBody: expect.any(String),
+						lastResponseHeaders: expect.any(Object),
+						lastResponseStatus: 200,
+						ruleId: 'rule-id-2',
+						scheduledDate: expect.any(String),
+						totalExecutions: 1,
+						totalSuccessfulExecutions: 1
+					}
+				]);
+			});
+
+			it('should handle inexistent rule', async () => {
+				const res = await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: 'inexistent-rule-id'
+				});
+
+				// @ts-expect-error
+				expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: task.id, namespace: 'spec' });
+				// @ts-expect-error
+				expect(hooks.registerForkTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.registerDelayedSubTask).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.getSubTaskParent).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.checkExecuteTask).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					task
+				});
+				// @ts-expect-error
+				expect(hooks.setTaskLock).toHaveBeenCalledWith({
+					pid: expect.any(String),
+					task
+				});
+				expect(hooks.webhooks.trigger).not.toHaveBeenCalled();
+				// @ts-expect-error
+				expect(hooks.setTaskSuccess).toHaveBeenCalledWith(
+					expect.objectContaining({
+						executionType: 'EVENT',
+						log: expect.objectContaining({
+							responseBody: JSON.stringify({
+								totalExecutions: 0,
+								totalFailedExecutions: 0,
+								totalSuccessfulExecutions: 0
+							}),
+							responseHeaders: {},
+							responseOk: true,
+							responseStatus: 200
+						}),
+						pid: expect.any(String),
+						task: {
+							...task,
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							pid: expect.any(String),
+							status: 'PROCESSING'
+						}
+					})
+				);
+
+				expect(res).toEqual([
+					{
+						...task,
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						firstExecutionDate: expect.any(String),
+						lastExecutionDate: expect.any(String),
+						lastExecutionType: 'EVENT',
 						lastResponseBody: expect.any(String),
 						lastResponseHeaders: expect.any(Object),
 						lastResponseStatus: 200,
@@ -1867,10 +2201,10 @@ describe('/index.ts', () => {
 			task = await hooks.registerTask(
 				createTestTask(0, {
 					conditionFilter: {
+						matchValue: 'value',
 						operator: 'EQUALS',
-						path: ['key'],
 						type: 'STRING',
-						value: 'value'
+						valuePath: ['key']
 					}
 				})
 			);
@@ -1888,11 +2222,9 @@ describe('/index.ts', () => {
 			});
 
 			expect(res).toEqual({
-				criteriaValue: 'value',
-				level: 'criteria',
-				operator: 'EQUALS',
+				matchValue: 'value',
 				passed: true,
-				reason: 'String "EQUALS" check PASSED',
+				reason: 'String criteria "EQUALS" check PASSED',
 				value: 'value'
 			});
 		});
@@ -1905,11 +2237,9 @@ describe('/index.ts', () => {
 			});
 
 			expect(res).toEqual({
-				criteriaValue: 'value',
-				level: 'criteria',
-				operator: 'EQUALS',
+				matchValue: 'value',
 				passed: false,
-				reason: 'String "EQUALS" check FAILED',
+				reason: 'String criteria "EQUALS" check FAILED',
 				value: ''
 			});
 		});
@@ -2412,6 +2742,59 @@ describe('/index.ts', () => {
 				expect(err).toBeInstanceOf(TaskException);
 				expect(err.message).toEqual('Task must be a primary or fork task');
 			}
+		});
+	});
+
+	describe('executeRule', () => {
+		let rule: Mock;
+		let task: Hooks.Task;
+
+		beforeAll(async () => {
+			task = await hooks.registerTask(createTestTask());
+		});
+
+		beforeEach(() => {
+			rule = vi.fn(async () => {
+				return _.times(5, i => {
+					return {
+						requestBody: { a: i },
+						requestHeaders: null,
+						requestMethod: null,
+						requestUrl: null
+					};
+				});
+			});
+
+			hooks.registerRule('rule-id', rule);
+		});
+
+		afterAll(async () => {
+			await hooks.clearTasks('spec');
+		});
+
+		it('should execute rule', async () => {
+			// @ts-expect-error
+			const res = await hooks.executeRule('rule-id', task);
+
+			expect(rule).toHaveBeenCalledWith({ task });
+			expect(res).toEqual(
+				_.times(5, i => {
+					return {
+						requestBody: { a: i },
+						requestHeaders: null,
+						requestMethod: null,
+						requestUrl: null
+					};
+				})
+			);
+		});
+
+		it('should handle inexistent rule', async () => {
+			// @ts-expect-error
+			const res = await hooks.executeRule('inexistent-rule-id', task);
+
+			expect(rule).not.toHaveBeenCalled();
+			expect(res).toEqual([]);
 		});
 	});
 
@@ -3632,7 +4015,8 @@ describe('/index.ts', () => {
 		beforeAll(async () => {
 			task = await hooks.registerTask({
 				namespace: 'spec',
-				requestUrl: 'https://httpbin.org/anything'
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: 'rule-id'
 			});
 
 			// @ts-expect-error
@@ -3671,6 +4055,7 @@ describe('/index.ts', () => {
 						namespace__eventPattern: '-',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
+						ruleId: 'rule-id',
 						type: 'SUBTASK'
 					}),
 					{
@@ -3726,6 +4111,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -3756,6 +4142,7 @@ describe('/index.ts', () => {
 						namespace__eventPattern: '-',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
+						ruleId: 'rule-id',
 						type: 'SUBTASK'
 					}),
 					{
@@ -3811,6 +4198,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -3915,6 +4303,7 @@ describe('/index.ts', () => {
 						namespace__eventPattern: '-',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
+						ruleId: 'rule-id',
 						type: 'SUBTASK'
 					}),
 					{
@@ -3970,6 +4359,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -4000,6 +4390,7 @@ describe('/index.ts', () => {
 						namespace__eventPattern: '-',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
+						ruleId: 'rule-id',
 						type: 'SUBTASK'
 					}),
 					{
@@ -4055,6 +4446,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -4107,6 +4499,7 @@ describe('/index.ts', () => {
 						namespace__eventPattern: '-',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
+						ruleId: 'rule-id',
 						type: 'SUBTASK'
 					}),
 					{
@@ -4162,6 +4555,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -4192,6 +4586,7 @@ describe('/index.ts', () => {
 						namespace__eventPattern: '-',
 						primaryId: task.id,
 						primaryNamespace: 'spec',
+						ruleId: 'rule-id',
 						type: 'SUBTASK'
 					}),
 					{
@@ -4247,6 +4642,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -4268,10 +4664,10 @@ describe('/index.ts', () => {
 		beforeEach(async () => {
 			task = await hooks.registerTask({
 				conditionFilter: {
+					matchValue: 'value',
 					operator: 'EQUALS',
-					path: ['key'],
 					type: 'STRING',
-					value: 'value'
+					valuePath: ['key']
 				},
 				description: 'description',
 				eventDelayDebounce: true,
@@ -4288,6 +4684,7 @@ describe('/index.ts', () => {
 				requestHeaders: { a: '1' },
 				requestMethod: 'POST',
 				requestUrl: 'https://httpbin.org/anything',
+				ruleId: 'rule-id',
 				scheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`
 			});
 
@@ -4346,11 +4743,12 @@ describe('/index.ts', () => {
 					concurrency: false,
 					conditionFilter: {
 						defaultValue: '',
+						matchValue: 'value',
 						normalize: true,
 						operator: 'EQUALS',
-						path: ['key'],
 						type: 'STRING',
-						value: 'value'
+						valuePath: ['key'],
+						valueTransformer: null
 					},
 					description: 'description',
 					eventDelayDebounce: true,
@@ -4387,6 +4785,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: 'rule-id',
 					scheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`,
 					status: 'ACTIVE',
 					title: '',
@@ -4410,11 +4809,12 @@ describe('/index.ts', () => {
 				description: 'description',
 				conditionFilter: {
 					defaultValue: '',
+					matchValue: 'value',
 					normalize: true,
 					operator: 'EQUALS',
-					path: ['key'],
 					type: 'STRING',
-					value: 'value'
+					valuePath: ['key'],
+					valueTransformer: null
 				},
 				eventDelayDebounce: true,
 				eventDelayUnit: 'minutes',
@@ -4450,6 +4850,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: 'rule-id',
 				scheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`,
 				status: 'ACTIVE',
 				title: '',
@@ -4531,6 +4932,15 @@ describe('/index.ts', () => {
 				expect(err).toBeInstanceOf(TaskException);
 				expect(err.message).toEqual('Task must be a primary task');
 			}
+		});
+	});
+
+	describe('registerRule', () => {
+		it('should create rule', () => {
+			const fn = vi.fn();
+			hooks.registerRule('rule-id', fn);
+
+			expect(hooks.rules.get('rule-id')).toEqual(fn);
 		});
 	});
 
@@ -4675,6 +5085,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: '-',
 				status: 'ACTIVE',
 				title: '',
@@ -4687,7 +5098,7 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should create task by [eventPattern, noAfter, noBefore, scheduledDate]', async () => {
+		it('should create task by [eventPattern, noAfter, noBefore, ruleId, scheduledDate]', async () => {
 			const currentYear = new Date().getFullYear();
 			const res = await hooks.registerTask({
 				eventPattern: 'event-pattern',
@@ -4695,6 +5106,7 @@ describe('/index.ts', () => {
 				noAfter: `${currentYear + 1}-01-01T00:00:00-03:00`,
 				noBefore: `${currentYear + 1}-01-01T00:00:00.000Z`,
 				requestUrl: 'https://httpbin.org/anything',
+				ruleId: 'rule-id',
 				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`
 			});
 
@@ -4738,6 +5150,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: 'rule-id',
 				scheduledDate: `${currentYear + 1}-01-01T03:00:00.000Z`,
 				status: 'ACTIVE',
 				title: '',
@@ -5555,6 +5968,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
 				title: '',
@@ -5662,6 +6076,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
 				title: '',
@@ -5780,6 +6195,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'MAX-ERRORS-REACHED',
 				title: '',
@@ -6024,6 +6440,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
 				title: '',
@@ -6147,6 +6564,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
 				title: '',
@@ -6279,6 +6697,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
 				title: '',
@@ -6410,6 +6829,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'ACTIVE',
 				title: '',
@@ -6541,6 +6961,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything',
 				rescheduleOnEvent: true,
 				retryLimit: 3,
+				ruleId: '',
 				scheduledDate: expect.any(String),
 				status: 'MAX-REPEAT-REACHED',
 				title: '',
@@ -6696,6 +7117,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: true,
 					retryLimit: 3,
+					ruleId: '',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -6827,6 +7249,7 @@ describe('/index.ts', () => {
 					requestUrl: 'https://httpbin.org/anything',
 					rescheduleOnEvent: false,
 					retryLimit: 3,
+					ruleId: '',
 					scheduledDate: expect.any(String),
 					status: 'ACTIVE',
 					title: '',
@@ -6901,7 +7324,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: null,
-				requestUrl: null
+				requestUrl: null,
+				ruleId: null
 			});
 
 			expect(res).toEqual({
@@ -6937,7 +7361,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: null,
-				requestUrl: null
+				requestUrl: null,
+				ruleId: null
 			});
 
 			expect(res).toEqual({
@@ -6977,7 +7402,8 @@ describe('/index.ts', () => {
 				requestBody: { a: 1, b: 2 },
 				requestHeaders: { a: '1', b: '2' },
 				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything-2'
+				requestUrl: 'https://httpbin.org/anything-2',
+				ruleId: null
 			});
 
 			expect(res).toEqual({
@@ -7013,7 +7439,8 @@ describe('/index.ts', () => {
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: null,
-				requestUrl: null
+				requestUrl: null,
+				ruleId: null
 			});
 
 			expect(res).toEqual({
@@ -7161,10 +7588,10 @@ describe('/index.ts', () => {
 			const res = await hooks.updateTask({
 				concurrency: !task.concurrency,
 				conditionFilter: {
+					matchValue: 'value',
 					operator: 'EQUALS',
-					path: ['key'],
 					type: 'STRING',
-					value: 'value'
+					valuePath: ['key']
 				},
 				description: 'updated',
 				eventDelayDebounce: !task.eventDelayDebounce,
@@ -7184,6 +7611,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything-2',
 				rescheduleOnEvent: !task.rescheduleOnEvent,
 				retryLimit: task.retryLimit + 1,
+				ruleId: 'rule-id',
 				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`,
 				title: 'updated'
 			});
@@ -7219,7 +7647,6 @@ describe('/index.ts', () => {
 
 			expect(
 				_.every(transactItems, item => {
-					console.log(item.Update);
 					return (
 						_.isEqual(item.Update!.ExpressionAttributeNames, {
 							'#concurrency': 'concurrency',
@@ -7241,6 +7668,7 @@ describe('/index.ts', () => {
 							'#requestUrl': 'requestUrl',
 							'#rescheduleOnEvent': 'rescheduleOnEvent',
 							'#retryLimit': 'retryLimit',
+							'#ruleId': 'ruleId',
 							'#scheduledDate': 'scheduledDate',
 							'#ts': '__ts',
 							'#title': 'title',
@@ -7250,11 +7678,12 @@ describe('/index.ts', () => {
 							':concurrency': true,
 							':conditionFilter': {
 								defaultValue: '',
+								matchValue: 'value',
 								normalize: true,
 								operator: 'EQUALS',
-								path: ['key'],
 								type: 'STRING',
-								value: 'value'
+								valuePath: ['key'],
+								valueTransformer: null
 							},
 							':description': 'updated',
 							':eventDelayDebounce': true,
@@ -7273,6 +7702,7 @@ describe('/index.ts', () => {
 							':requestUrl': 'https://httpbin.org/anything-2',
 							':rescheduleOnEvent': false,
 							':retryLimit': 4,
+							':ruleId': 'rule-id',
 							':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
 							':title': 'updated',
 							':ts': item.Update!.ExpressionAttributeValues![':ts'],
@@ -7301,6 +7731,7 @@ describe('/index.ts', () => {
 								'#requestUrl = :requestUrl',
 								'#rescheduleOnEvent = :rescheduleOnEvent',
 								'#retryLimit = :retryLimit',
+								'#ruleId = :ruleId',
 								'#scheduledDate = :scheduledDate',
 								'#title = :title'
 							].join(', ')}`
@@ -7345,10 +7776,10 @@ describe('/index.ts', () => {
 			const res = await hooks.updateTask({
 				concurrency: !task.concurrency,
 				conditionFilter: {
+					matchValue: 'value',
 					operator: 'EQUALS',
-					path: ['key'],
 					type: 'STRING',
-					value: 'value'
+					valuePath: ['key']
 				},
 				description: 'updated',
 				eventDelayDebounce: !task.eventDelayDebounce,
@@ -7369,6 +7800,7 @@ describe('/index.ts', () => {
 				requestUrl: 'https://httpbin.org/anything-2',
 				rescheduleOnEvent: !task.rescheduleOnEvent,
 				retryLimit: task.retryLimit + 1,
+				ruleId: 'rule-id',
 				scheduledDate: `${currentYear + 1}-01-01T00:00:00-03:00`,
 				title: 'updated'
 			});
@@ -7410,6 +7842,7 @@ describe('/index.ts', () => {
 								'#requestUrl': 'requestUrl',
 								'#rescheduleOnEvent': 'rescheduleOnEvent',
 								'#retryLimit': 'retryLimit',
+								'#ruleId': 'ruleId',
 								'#scheduledDate': 'scheduledDate',
 								'#title': 'title'
 							},
@@ -7419,11 +7852,12 @@ describe('/index.ts', () => {
 								':concurrency': true,
 								':conditionFilter': {
 									defaultValue: '',
+									matchValue: 'value',
 									normalize: true,
 									operator: 'EQUALS',
-									path: ['key'],
 									type: 'STRING',
-									value: 'value'
+									valuePath: ['key'],
+									valueTransformer: null
 								},
 								':description': 'updated',
 								':eventDelayDebounce': true,
@@ -7448,6 +7882,7 @@ describe('/index.ts', () => {
 								':requestUrl': 'https://httpbin.org/anything-2',
 								':rescheduleOnEvent': false,
 								':retryLimit': 4,
+								':ruleId': 'rule-id',
 								':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
 								':title': 'updated'
 							},
@@ -7479,6 +7914,7 @@ describe('/index.ts', () => {
 								'#requestUrl = :requestUrl',
 								'#rescheduleOnEvent = :rescheduleOnEvent',
 								'#retryLimit = :retryLimit',
+								'#ruleId = :ruleId',
 								'#scheduledDate = :scheduledDate',
 								'#title = :title'
 							].join(', ')}`

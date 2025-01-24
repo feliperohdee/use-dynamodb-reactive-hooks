@@ -23,6 +23,7 @@ A powerful TypeScript library for orchestrating dynamic, event-driven, and sched
 - 🔒 Concurrency control to prevent simultaneous execution of the same task.
 - 🧪 Debugging capabilities to test task conditions against provided data.
 - 🆔 UUID generation and hashing utilities for task and fork IDs.
+- 🎯 Rules system for dynamic webhook transformation and multiplexing based on custom logic.
 
 ## 📦 Installation
 
@@ -241,6 +242,51 @@ const { count } = await hooks.clearTasks('my-app');
 // Clear all logs in a namespace
 const { count } = await hooks.clearLogs('my-app');
 ```
+
+### Rules System
+
+```typescript
+// Register a rule that transforms webhook requests
+hooks.registerRule('rule-id', async ({ task }) => {
+	// Return an array of transformed webhook requests
+	return [
+		{
+			requestBody: { key: 'value1' },
+			requestHeaders: { 'X-Custom': 'header1' },
+			requestMethod: 'POST',
+			requestUrl: 'https://api.example.com/endpoint1'
+		},
+		{
+			requestBody: { key: 'value2' },
+			requestHeaders: { 'X-Custom': 'header2' },
+			requestMethod: 'POST',
+			requestUrl: 'https://api.example.com/endpoint2'
+		}
+	];
+});
+
+// Use the rule when registering a task
+const task = await hooks.registerTask({
+	namespace: 'my-app',
+	requestUrl: 'https://api.example.com/endpoint',
+	ruleId: 'rule-id' // Reference the rule
+});
+
+// Or trigger a specific rule
+const { processed, errors } = await hooks.trigger({
+	namespace: 'my-app',
+	id: 'task-id',
+	ruleId: 'rule-id'
+});
+```
+
+The rules system allows you to:
+
+- Transform webhook requests dynamically based on custom logic
+- Split a single webhook into multiple requests with different configurations
+- Apply complex transformations to request bodies, headers, methods and URLs
+- Chain multiple rules together for advanced webhook orchestration
+- Override rule behavior at trigger time with custom configurations
 
 ### Debugging
 

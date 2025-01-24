@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import _, { keys } from 'lodash';
 import UseFilterCriteria from 'use-filter-criteria';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
@@ -66,6 +66,7 @@ const task = z.object({
 	requestUrl: z.string().url(),
 	rescheduleOnEvent: z.boolean().default(true),
 	retryLimit: z.number().min(0).default(3),
+	ruleId: z.string(),
 	scheduledDate: z.union([z.string().datetime(), z.literal('-')]),
 	status: taskStatus.default('ACTIVE'),
 	totalErrors: z.number(),
@@ -76,6 +77,18 @@ const task = z.object({
 	ttl: z.number().min(0),
 	type: taskType
 });
+
+const taskRuleResult = z.object({
+	requestBody: z.record(z.any()).nullable(),
+	requestHeaders: z.record(z.string()).nullable(),
+	requestMethod: Webhooks.schema.request.shape.method.nullable(),
+	requestUrl: z.string().url().nullable()
+});
+
+const taskRule = z
+	.function()
+	.args(z.object({ task }))
+	.returns(z.union([z.array(taskRuleResult), z.promise(z.array(taskRuleResult))]));
 
 const taskInput = task
 	.extend({
@@ -132,6 +145,7 @@ const taskInput = task
 		requestHeaders: true,
 		requestMethod: true,
 		rescheduleOnEvent: true,
+		ruleId: true,
 		scheduledDate: true,
 		title: true
 	})
@@ -159,6 +173,7 @@ const callWebhookInput = z
 		eventDelayValue: z.number().min(0).nullable(),
 		forkId: z.string().nullable(),
 		forkOnly: z.boolean(),
+		ruleId: z.string().nullable(),
 		keys: z.array(taskKeys)
 	})
 	.merge(optionalRequestInput);
@@ -326,7 +341,8 @@ const triggerInput = z.union([
 			forkId: z.string().optional(),
 			forkOnly: z.boolean().optional(),
 			id: z.string(),
-			namespace: z.string()
+			namespace: z.string(),
+			ruleId: z.string().optional()
 		})
 		.merge(optionalRequestInput),
 	z
@@ -339,7 +355,8 @@ const triggerInput = z.union([
 			eventPatternPrefix: z.boolean().default(false),
 			forkId: z.string().optional(),
 			forkOnly: z.boolean().optional(),
-			namespace: z.string()
+			namespace: z.string(),
+			ruleId: z.string().optional()
 		})
 		.merge(optionalRequestInput)
 ]);
@@ -367,6 +384,7 @@ const updateTaskInput = z
 		requestUrl: z.string().url().optional(),
 		rescheduleOnEvent: z.boolean().optional(),
 		retryLimit: z.number().min(0).optional(),
+		ruleId: z.string().optional(),
 		scheduledDate: z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past').optional(),
 		title: z.string().optional()
 	})
@@ -384,7 +402,7 @@ const updateTaskInput = z
 		}
 	);
 
-export default {
+export {
 	callWebhookInput,
 	checkExecuteTaskInput,
 	debugConditionInput,
@@ -404,6 +422,8 @@ export default {
 	setTaskActiveInput,
 	taskInput,
 	taskKeys,
+	taskRule,
+	taskRuleResult,
 	taskStatus,
 	taskType,
 	timeUnit,

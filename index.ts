@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { promiseAllSettled, promiseReduce } from 'use-async-helpers';
+import { promiseAllSettled, promiseMap, promiseReduce } from 'use-async-helpers';
 import { TransactWriteCommandOutput } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import HttpError from 'use-http-error';
@@ -9,7 +9,7 @@ import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
 
-import schema from './index.schema';
+import * as schema from './index.schema';
 
 const DEFAULT_MAX_CONCURRENCY = 25;
 const MINUTE_IN_MS = 60 * 1000;
@@ -50,6 +50,8 @@ namespace Hooks {
 	export type TaskExecutionType = z.infer<typeof schema.taskExecutionType>;
 	export type TaskInput = z.input<typeof schema.taskInput>;
 	export type TaskKeys = z.infer<typeof schema.taskKeys>;
+	export type TaskRule = z.infer<typeof schema.taskRule>;
+	export type TaskRuleResult = z.infer<typeof schema.taskRuleResult>;
 	export type TaskStatus = z.infer<typeof schema.taskStatus>;
 	export type TaskType = z.infer<typeof schema.taskType>;
 	export type TimeUnit = z.infer<typeof schema.timeUnit>;
@@ -76,6 +78,7 @@ class Hooks {
 	public db: { tasks: Dynamodb<Hooks.Task> };
 	public maxConcurrency: number;
 	public maxErrors: number;
+	public rules: Map<string, Hooks.TaskRule>;
 	public webhooks: Webhooks;
 
 	constructor(options: Hooks.ConstructorOptions) {
@@ -171,12 +174,13 @@ class Hooks {
 		this.db = { tasks };
 		this.maxConcurrency = options.maxConcurrency || DEFAULT_MAX_CONCURRENCY;
 		this.maxErrors = options.maxErrors || 5;
+		this.rules = new Map();
 		this.webhooks = webhooks;
 	}
 
 	private calculateNextSchedule(currentTime: string, rule: { unit: Hooks.TimeUnit; value: number }): string {
 		let current = new Date(currentTime);
-		let ms: number;
+		let ms: number = 0;
 
 		switch (rule.unit) {
 			case 'minutes':
@@ -299,33 +303,97 @@ class Hooks {
 						task = await this.setTaskLock({ pid, task });
 					}
 
-					const log = await this.webhooks.trigger({
-						metadata: {
-							executionType: args.executionType,
-							forkId: task.forkId,
-							taskId: task.primaryId,
-							taskType: type
-						},
-						namespace: task.primaryNamespace,
-						requestBody: request.requestBody,
-						requestHeaders: request.requestHeaders,
-						requestMethod: request.requestMethod,
-						requestUrl: request.requestUrl,
-						retryLimit: task.retryLimit
-					});
-
-					task = await this.setTaskSuccess({
-						executionType: args.executionType,
-						log,
-						pid,
-						task: {
+					if (args.ruleId || task!.ruleId) {
+						const rules = await this.executeRule(args.ruleId || task!.ruleId, {
 							...task!,
 							requestBody: request.requestBody,
 							requestHeaders: request.requestHeaders,
 							requestMethod: request.requestMethod,
 							requestUrl: request.requestUrl
-						}
-					});
+						});
+
+						const logs = await promiseMap(rules, rule => {
+							return this.webhooks.trigger({
+								metadata: {
+									executionType: args.executionType,
+									forkId: task!.forkId,
+									taskId: task!.primaryId,
+									taskType: type
+								},
+								namespace: task!.primaryNamespace,
+								requestBody: rule.requestBody || request.requestBody,
+								requestHeaders: rule.requestHeaders || request.requestHeaders,
+								requestMethod: rule.requestMethod || request.requestMethod,
+								requestUrl: rule.requestUrl || request.requestUrl,
+								retryLimit: task!.retryLimit
+							});
+						});
+
+						const logsStats = _.reduce<Hooks.Log, Record<string, number>>(
+							logs,
+							(reduction, log) => {
+								reduction.totalExecutions += 1;
+
+								if (log.responseOk) {
+									reduction.totalSuccessfulExecutions += 1;
+								} else {
+									reduction.totalFailedExecutions += 1;
+								}
+
+								return reduction;
+							},
+							{
+								totalExecutions: 0,
+								totalFailedExecutions: 0,
+								totalSuccessfulExecutions: 0
+							}
+						);
+
+						task = await this.setTaskSuccess({
+							executionType: args.executionType,
+							log: {
+								responseBody: JSON.stringify(logsStats),
+								responseHeaders: {},
+								responseOk: true,
+								responseStatus: 200
+							},
+							pid,
+							task: {
+								...task!,
+								requestBody: request.requestBody,
+								requestHeaders: request.requestHeaders,
+								requestMethod: request.requestMethod,
+								requestUrl: request.requestUrl
+							}
+						});
+					} else {
+						const log = await this.webhooks.trigger({
+							metadata: {
+								executionType: args.executionType,
+								forkId: task.forkId,
+								taskId: task.primaryId,
+								taskType: type
+							},
+							namespace: task.primaryNamespace,
+							requestBody: request.requestBody,
+							requestHeaders: request.requestHeaders,
+							requestMethod: request.requestMethod,
+							requestUrl: request.requestUrl,
+							retryLimit: task.retryLimit
+						});
+
+						task = await this.setTaskSuccess({
+							executionType: args.executionType,
+							log: {
+								responseBody: log.responseBody,
+								responseHeaders: log.responseHeaders,
+								responseOk: log.responseOk,
+								responseStatus: log.responseStatus
+							},
+							pid,
+							task
+						});
+					}
 				} catch (err) {
 					if (err instanceof ConditionalCheckFailedException || err instanceof TaskException) {
 						return null;
@@ -335,26 +403,11 @@ class Hooks {
 						error: err as Error,
 						executionType: args.executionType,
 						pid,
-						task: {
-							...task!,
-							requestBody: request.requestBody,
-							requestHeaders: request.requestHeaders,
-							requestMethod: request.requestMethod,
-							requestUrl: request.requestUrl
-						}
+						task: task!
 					});
 				}
 
-				return {
-					...task!,
-					eventDelayDebounce: delay.eventDelayDebounce,
-					eventDelayUnit: delay.eventDelayUnit,
-					eventDelayValue: delay.eventDelayValue,
-					requestBody: request.requestBody,
-					requestHeaders: request.requestHeaders,
-					requestMethod: request.requestMethod,
-					requestUrl: request.requestUrl
-				};
+				return task;
 			};
 
 			promiseTasks = [...promiseTasks, promiseTask];
@@ -550,6 +603,16 @@ class Hooks {
 		await promiseAllSettled(promiseTasks, this.maxConcurrency);
 
 		return task;
+	}
+
+	private async executeRule(key: string, task: Hooks.Task): Promise<Hooks.TaskRuleResult[]> {
+		const rule = this.rules.get(key);
+
+		if (!rule) {
+			return [];
+		}
+
+		return rule({ task });
 	}
 
 	async fetchLogs(input: Hooks.FetchLogsInput): Promise<Dynamodb.MultiResponse<Hooks.Log, false>> {
@@ -918,6 +981,7 @@ class Hooks {
 			requestHeaders: args.requestHeaders,
 			requestMethod: args.requestMethod,
 			requestUrl: args.requestUrl,
+			ruleId: args.ruleId,
 			scheduledDate,
 			status: 'ACTIVE',
 			ttl: Math.floor((new Date(scheduledDate).getTime() + SUBTASK_TTL_IN_MS) / 1000),
@@ -980,12 +1044,17 @@ class Hooks {
 				requestUrl: args.primaryTask.requestUrl,
 				rescheduleOnEvent: args.primaryTask.rescheduleOnEvent,
 				retryLimit: args.primaryTask.retryLimit,
+				ruleId: args.primaryTask.ruleId,
 				scheduledDate: args.primaryTask.scheduledDate,
 				status: 'ACTIVE',
 				type: 'FORK'
 			}),
 			{ overwrite }
 		);
+	}
+
+	registerRule(name: string, rule: Hooks.TaskRule): void {
+		this.rules.set(name, rule);
 	}
 
 	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
@@ -1493,7 +1562,8 @@ class Hooks {
 							requestBody: args.requestBody || null,
 							requestHeaders: args.requestHeaders || null,
 							requestMethod: args.requestMethod || null,
-							requestUrl: args.requestUrl || null
+							requestUrl: args.requestUrl || null,
+							ruleId: args.ruleId || null
 						};
 
 						if (this.customWebhookCall) {
@@ -1534,7 +1604,8 @@ class Hooks {
 						requestBody: null,
 						requestHeaders: null,
 						requestMethod: null,
-						requestUrl: null
+						requestUrl: null,
+						ruleId: null
 					};
 
 					if (this.customWebhookCall) {
@@ -1636,6 +1707,7 @@ class Hooks {
 			'requestUrl',
 			'rescheduleOnEvent',
 			'retryLimit',
+			'ruleId',
 			'scheduledDate',
 			'title'
 		]);
