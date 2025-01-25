@@ -29,6 +29,7 @@ namespace Hooks {
 		secretAccessKey: string;
 		tasksTableName: string;
 		webhookCaller?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
+		webhookChunkSize?: number;
 	};
 
 	export type CallWebhookInput = z.input<typeof schema.callWebhookInput>;
@@ -79,6 +80,7 @@ class Hooks {
 	public maxConcurrency: number;
 	public maxErrors: number;
 	public rules: Map<string, Hooks.TaskRule>;
+	public webhookChunkSize: number;
 	public webhooks: Webhooks;
 
 	constructor(options: Hooks.ConstructorOptions) {
@@ -176,6 +178,7 @@ class Hooks {
 		this.maxErrors = options.maxErrors || 5;
 		this.rules = new Map();
 		this.webhooks = webhooks;
+		this.webhookChunkSize = options.webhookChunkSize || 0;
 	}
 
 	private calculateNextSchedule(currentTime: string, rule: { unit: Hooks.TimeUnit; value: number }): string {
@@ -303,6 +306,7 @@ class Hooks {
 						task = await this.setTaskLock({ pid, task });
 					}
 
+					// handle rules
 					if (args.ruleId || task!.ruleId) {
 						const rules = await this.executeRule(args.ruleId || task!.ruleId, {
 							...task!,
@@ -312,22 +316,26 @@ class Hooks {
 							requestUrl: request.requestUrl
 						});
 
-						const logs = await promiseMap(rules, rule => {
-							return this.webhooks.trigger({
-								metadata: {
-									executionType: args.executionType,
-									forkId: task!.forkId,
-									taskId: task!.primaryId,
-									taskType: type
-								},
-								namespace: task!.primaryNamespace,
-								requestBody: rule.requestBody || request.requestBody,
-								requestHeaders: rule.requestHeaders || request.requestHeaders,
-								requestMethod: rule.requestMethod || request.requestMethod,
-								requestUrl: rule.requestUrl || request.requestUrl,
-								retryLimit: task!.retryLimit
-							});
-						});
+						const logs = await promiseMap(
+							rules,
+							rule => {
+								return this.webhooks.trigger({
+									metadata: {
+										executionType: args.executionType,
+										forkId: task!.forkId,
+										taskId: task!.primaryId,
+										taskType: type
+									},
+									namespace: task!.primaryNamespace,
+									requestBody: rule.requestBody || request.requestBody,
+									requestHeaders: rule.requestHeaders || request.requestHeaders,
+									requestMethod: rule.requestMethod || request.requestMethod,
+									requestUrl: rule.requestUrl || request.requestUrl,
+									retryLimit: task!.retryLimit
+								});
+							},
+							this.maxConcurrency
+						);
 
 						const logsStats = _.reduce<Hooks.Log, Record<string, number>>(
 							logs,
@@ -1566,21 +1574,46 @@ class Hooks {
 							ruleId: args.ruleId || null
 						};
 
-						if (this.customWebhookCall) {
-							const res = await this.customWebhookCall(callWebhookInput);
+						if (this.webhookChunkSize > 0) {
+							// Process in chunks if webhookChunkSize is set
+							let promiseTasks: (() => Promise<void>)[] = [];
 
-							result.processed += _.size(res);
+							for (const chunk of _.chunk(items, this.webhookChunkSize)) {
+								const promiseTask = async () => {
+									if (this.customWebhookCall) {
+										const res = await this.customWebhookCall({
+											...callWebhookInput,
+											keys: chunk
+										});
+										result.processed += _.size(res);
+									} else {
+										const res = await this.callWebhook({
+											...callWebhookInput,
+											keys: chunk
+										});
+										result.processed += _.size(res);
+									}
+								};
+
+								promiseTasks = [...promiseTasks, promiseTask];
+							}
+
+							await promiseAllSettled(promiseTasks, this.maxConcurrency);
 						} else {
-							const res = await this.callWebhook(callWebhookInput);
-
-							result.processed += _.size(res);
+							// Original behavior - process all items at once
+							if (this.customWebhookCall) {
+								const res = await this.customWebhookCall(callWebhookInput);
+								result.processed += _.size(res);
+							} else {
+								const res = await this.callWebhook(callWebhookInput);
+								result.processed += _.size(res);
+							}
 						}
 					}
 				});
 			} catch (err) {
 				console.error('Error processing tasks:', err);
 				result.errors += 1;
-
 				throw err;
 			}
 
@@ -1608,21 +1641,46 @@ class Hooks {
 						ruleId: null
 					};
 
-					if (this.customWebhookCall) {
-						const res = await this.customWebhookCall(callWebhookInput);
+					if (this.webhookChunkSize > 0) {
+						let promiseTasks: (() => Promise<void>)[] = [];
 
-						result.processed += _.size(res);
+						// Process in chunks if webhookChunkSize is set
+						for (const chunk of _.chunk(items, this.webhookChunkSize)) {
+							const promiseTask = async () => {
+								if (this.customWebhookCall) {
+									const res = await this.customWebhookCall({
+										...callWebhookInput,
+										keys: chunk
+									});
+									result.processed += _.size(res);
+								} else {
+									const res = await this.callWebhook({
+										...callWebhookInput,
+										keys: chunk
+									});
+									result.processed += _.size(res);
+								}
+							};
+
+							promiseTasks = [...promiseTasks, promiseTask];
+						}
+
+						await promiseAllSettled(promiseTasks, this.maxConcurrency);
 					} else {
-						const res = await this.callWebhook(callWebhookInput);
-
-						result.processed += _.size(res);
+						// Original behavior - process all items at once
+						if (this.customWebhookCall) {
+							const res = await this.customWebhookCall(callWebhookInput);
+							result.processed += _.size(res);
+						} else {
+							const res = await this.callWebhook(callWebhookInput);
+							result.processed += _.size(res);
+						}
 					}
 				}
 			});
 		} catch (err) {
 			console.error('Error processing tasks:', err);
 			result.errors += 1;
-
 			throw err;
 		}
 

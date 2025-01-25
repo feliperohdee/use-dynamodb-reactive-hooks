@@ -17,6 +17,7 @@ A powerful TypeScript library for orchestrating dynamic, event-driven, and sched
 - 🔎 Rich querying capabilities by namespace, status, time ranges, event patterns, and IDs.
 - 🏃 Concurrent webhook execution with configurable limits.
 - 📦 Batch operations support for efficient updates and deletions.
+- 🔄 Configurable webhook chunk processing for optimal performance and resource management.
 - 📊 Detailed execution logs and metrics, including response body, headers, and status.
 - 🔀 Forking mechanism to create new tasks based on existing ones, with customizable forking behavior.
 - ⏱️ Configurable delay mechanism to postpone task execution, with optional debouncing for event-driven delays.
@@ -52,7 +53,8 @@ const hooks = new Hooks({
 	tasksTableName: 'YOUR_TABLE_NAME',
 	webhookCaller: async (input: Hooks.CallWebhookInput) => {
 		// Optional: custom webhook caller implementation
-	}
+	},
+	webhookChunkSize: 10 // Optional: process webhooks in chunks of specified size
 });
 ```
 
@@ -288,6 +290,23 @@ The rules system allows you to:
 - Chain multiple rules together for advanced webhook orchestration
 - Override rule behavior at trigger time with custom configurations
 
+### Webhook Chunk Processing
+
+```typescript
+// Initialize hooks with chunk processing
+const hooks = new Hooks({
+	// ... other options
+	webhookChunkSize: 10, // Process webhooks in batches of 10
+	maxConcurrency: 25 // Control concurrent execution of chunks
+});
+
+// The webhookChunkSize parameter provides several benefits:
+// - Better memory management for large numbers of webhooks
+// - Improved error isolation between chunks
+// - Fine-grained control over processing rate
+// - Reduced network load through controlled batch sizes
+```
+
 ### Debugging
 
 ```typescript
@@ -396,6 +415,9 @@ yarn test:coverage
 - Concurrency control is implemented using the `pid` field and conditional updates.
 - Debugging capabilities allow testing task conditions without triggering actual webhooks.
 - UUID generation and hashing utilities are provided for task and fork IDs.
+- Webhook execution can be processed in chunks using the `webhookChunkSize` parameter for better control over batch processing.
+- When `webhookChunkSize` is set, webhooks are processed in batches of the specified size while respecting `maxConcurrency`.
+- Setting `webhookChunkSize` to 0 (default) processes all webhooks in a single batch.
 
 ## 📄 License
 
@@ -414,3 +436,7 @@ MIT © [Felipe Rohde](mailto:feliperohdee@gmail.com)
 - [use-dynamodb](https://github.com/feliperohdee/use-dynamodb)
 - [AWS SDK for JavaScript v3](https://github.com/aws/aws-sdk-js-v3)
 - [Amazon DynamoDB](https://aws.amazon.com/dynamodb/)
+
+## 📊 Flowchart
+
+<img style="background:#fff;padding:10px" src="https://mermaid.ink/img/pako:eNqVGOly2kb4VXaU8TiZkTOAOQzTSYcAbpiJHReI0xb4sUgLaBArIq1iE-CF-hp9se6hvSRkt_ywd7_73l0dHC_ykdNxLi4OIMAB6YADmGFAf5dkjbbosgMuFzBBl64JfYRxABchSij6IBAcuYuDLYz3vSiMYsb5Zsl_ktmkmaBnoukq_HeO7mMU-yh-kTIMMHqRIEFehP3XDCMoJsFrRAvobVZxlGL_RbItDPDHzaoMvYwwuYXbINwzChbM8FKgTzN8AqeLixme4WUYPXlrGBMw6QvsxQUYYBLvwUMUYJII4JhQkrdT_m_-DlxdfQCTOFitUDzZ71ByyDaA7U6CxcQzhuMdxCkMjxLxLSDrId6lZCqZnygEcNC8RMTYWyM_DZGvpCjIVK0kas78yzz6PUXUo65Hgh8ITGCySSwNyhbuGSf-uH-AhKYLTwXvYg8GPxAmGXT-Ov_Q16zDvs2gjTUYJFCzKbI-JMj0h7kAHuLIQ0kS4BUYI5LuBNa2nsv_hhbrKNr01immf5C3OTwZkHHwE4EPoPLryRIw9M_zWkTSwDJSZTAHGhYLRIGDZ_lPlBwFw5CgbTIVvHzNgpK3PYusZuDGZKo4NJlmO0GU_LKIP_Bi28LnXoS9NI4R9vbzl4y6j45SZjcMhWFSKgVk5kECvmDPSlUPhmEmEtzSbgNXoBdtAZ0WJI5o5HzE1l4Ux__8jb0ACkbLfO6QIWdqrJkvZ93IGZuXYVpIB1dAgggDI8Gm2ZxVEokC-gQTZrYA3QYhrTVZPzalzugjDAOf1rHCT-8g8daafl7Kz4LPSp5NAsPGgsRszlCp_4P-PgIZy3gT7BjblC24gDn3fYD9fO8NnpGX5mNmqTxwOnMgmliu-UEcPzo0XLnACwViWM3LBNxG8eYI2F9lz1QyMujL3ON0wYBH8BuiY43WDuH66Q6IrWS3Xc-MpbrsqHIkLxWmge3ocUHQQSjkWA5gFXsluDggTQSEDdEAAzbqMshXTI9lEKMdguQOPgvgfUTAKMWYDhFZcJY-7hqXfgRGVwwwu0z4pRxD_EPwTNZx9MRwgziO4infZjlngHMVYUSrMOKs2HJeGS8BPmTMHCpbyCYxhyK1O0uwUSs9iGW9zEsF8B5izph-5V1SwTGU_OeA5nlKQmpPHikOfILYD1XYiooOBsgYNTkqHat-ECOPFPuClVlET-rPkceHJw0RHXUo1C09f1E4iyM9bpk7TMR0zNpl2Ffyxuh7SmNOr1sFiQabbhS2G6ceK5oDx3S97ym1XRVDnkq7aFbCmXlxlpGbT8ebDgwfdtpUuxhyURRIrdbIJZ83-eq3RpP2mYHv6KPgoHFsazosSbjRg8fB_eQIRmgVJPSkYbip3BQGXZF93Ps06H_9POgL1zk795qtcg6bOjiGLb7gcC-GOgezrcyOhTZSg32uhv63IpPTVuRm-TnXZSrOfRTCfLfkOk_Q6IOab6XBGmcXkj64dFKM0yvHZlyH5KVE3oay_VybZh87uWRmp5DOJ9dEmy1D5CJWlJfLLmd__RQfsVtrvlxtjzgXo9ORZDsZSIUpNCTDqIZkm_k5DhbCjEiGUM0oFUJlr7RJJcfK_Ch3By-Ovbs0JMEuVLJLL8HCa5RQ-rNFZgZnTJEhMnQqdQKjHDkrVOeCIwrZsOkP2RRT4bewOgdfd-zgy4inYpfdPgRsXsrPMiIYxBlpMouT0px3AaYjnl8gssekpVnMDkbDSUQJsYN6xK8zanzYFNoN-bK6R89EvW0B25XO6nOystOKvjho7gnip9Vd94-r0eBh0J3Qf13WPTlBRgwEgq2EB_QaJrYqDxppGI-IiKBUNxiNvozGJepyEjKTxWOdS-j2JsPHQaGL6fItG7Dzd0ZaxmSvS9YLYZL00RLsstm0DMKw8wZdL2tL303oA2yDOm-qjWbDq2Tbq6fAJ-tObffseuzrS-dNxa-3YDUn0EdekLARmUm8WTZQW0msoZZ_XSuVWF00UK2Sk5jwq6gQt7xGjWVDiWvC6qINS8XVYbV-4-XEIZ69TNwSLRBS4rxm7aZ2Uypu0ap61bw4T04IomRSIytKJmo2qpXyGAq0TBOXar4wXeu56-aHmJu_hWhrTIGFh7trvXnc4rHq6lPNVcPZtSeDm2srV5eraz9VXftZ4dqXcNc-uWQBmQ5YA8Q1utA1WtiVzeWqJhG1Y0rSF33XvnyLujD6pev7AGF_Z3zsEyL4tz6X3V_oobylMSBR7LjOlm5g4Dsdh3-UnTn8Y-3M6dClD-PNzJnhE6WDKYnGe-w5HRKnyHXiKF2tnc4Shgndpdy3fgBXMdxKkh3Ef0WRuXU6B-fZ6bRq72vtertWr9eazfp103X2TueqWn9faV1Xaq2bZvumXW23Tq7zk_NXKXmtVa_W2jfNVqNx3XIdRPMUxXfiQzT_Hn36F5x8sBA?type=png"/>

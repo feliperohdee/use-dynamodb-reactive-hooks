@@ -7267,7 +7267,7 @@ describe('/index.ts', () => {
 	describe('trigger', () => {
 		let tasks: Hooks.Task[];
 
-		beforeAll(async () => {
+		beforeEach(async () => {
 			tasks = await Promise.all([
 				hooks.registerTask(
 					createTestTask(0, {
@@ -7283,169 +7283,298 @@ describe('/index.ts', () => {
 				),
 				hooks.registerTask(createTestTask(1000))
 			]);
-		});
 
-		beforeEach(() => {
 			vi.spyOn(hooks, 'callWebhook');
 			// @ts-expect-error
 			vi.spyOn(hooks, 'queryActiveTasks');
 		});
 
-		afterAll(async () => {
+		afterEach(async () => {
 			await Promise.all([hooks.clearTasks('spec'), hooks.webhooks.clearLogs('spec')]);
 		});
 
-		it('should works SCHEDULED', async () => {
-			const res = await hooks.trigger();
+		describe('EVENT', () => {
+			it('should works by eventPattern', async () => {
+				const res = await hooks.trigger({
+					eventPattern: 'event-pattern-',
+					eventPatternPrefix: true,
+					namespace: 'spec'
+				});
 
-			// @ts-expect-error
-			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
-				date: expect.any(Date),
-				onChunk: expect.any(Function)
+				expect(hooks.callWebhook).toHaveBeenCalledOnce();
+				expect(hooks.callWebhook).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: expect.arrayContaining(
+						_.map(tasks.slice(0, 2), task => {
+							return {
+								id: task.id,
+								namespace: task.namespace
+							};
+						})
+					),
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
+
+				expect(res).toEqual({
+					processed: 2,
+					errors: 0
+				});
 			});
 
-			expect(hooks.callWebhook).toHaveBeenCalledWith({
-				date: expect.any(Date),
-				conditionData: null,
-				eventDelayDebounce: null,
-				eventDelayUnit: null,
-				eventDelayValue: null,
-				executionType: 'SCHEDULED',
-				forkId: null,
-				forkOnly: false,
-				keys: expect.arrayContaining(
-					_.map(tasks.slice(0, 2), task => {
-						return {
-							id: task.id,
-							namespace: task.namespace
-						};
-					})
-				),
-				requestBody: null,
-				requestHeaders: null,
-				requestMethod: null,
-				requestUrl: null,
-				ruleId: null
+			it('should works by eventPattern with [requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
+				const res = await hooks.trigger({
+					eventPattern: 'event-pattern-',
+					eventPatternPrefix: true,
+					namespace: 'spec',
+					requestBody: { a: 1, b: 2 },
+					requestHeaders: { a: '1', b: '2' },
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything-2'
+				});
+
+				expect(hooks.callWebhook).toHaveBeenCalledOnce();
+				expect(hooks.callWebhook).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: expect.arrayContaining(
+						_.map(tasks.slice(0, 2), task => {
+							return {
+								id: task.id,
+								namespace: task.namespace
+							};
+						})
+					),
+					requestBody: { a: 1, b: 2 },
+					requestHeaders: { a: '1', b: '2' },
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything-2',
+					ruleId: null
+				});
+
+				expect(res).toEqual({
+					processed: 2,
+					errors: 0
+				});
 			});
 
-			expect(res).toEqual({
-				processed: 2,
-				errors: 0
+			it('should works by id', async () => {
+				const res = await hooks.trigger({
+					id: 'id',
+					namespace: 'spec'
+				});
+
+				// @ts-expect-error
+				expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					id: 'id',
+					namespace: 'spec',
+					onChunk: expect.any(Function)
+				});
+
+				expect(hooks.callWebhook).toHaveBeenCalledOnce();
+				expect(hooks.callWebhook).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
+
+				expect(res).toEqual({
+					processed: 0,
+					errors: 0
+				});
+			});
+
+			it('should process in chunks when webhookChunkSize is set', async () => {
+				hooks.webhookChunkSize = 1;
+
+				const res = await hooks.trigger({
+					eventPattern: 'event-pattern-',
+					eventPatternPrefix: true,
+					namespace: 'spec'
+				});
+
+				expect(hooks.callWebhook).toHaveBeenCalledTimes(2);
+				expect(hooks.callWebhook).toHaveBeenNthCalledWith(1, {
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [
+						{
+							id: tasks[0].id,
+							namespace: tasks[0].namespace
+						}
+					],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
+
+				expect(hooks.callWebhook).toHaveBeenNthCalledWith(2, {
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [
+						{
+							id: tasks[1].id,
+							namespace: tasks[1].namespace
+						}
+					],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
+
+				expect(res).toEqual({
+					processed: 2,
+					errors: 0
+				});
 			});
 		});
 
-		it('should works EVENT by eventPattern', async () => {
-			const res = await hooks.trigger({
-				eventPattern: 'event-pattern-',
-				eventPatternPrefix: true,
-				namespace: 'spec'
+		describe('SCHEDULED', () => {
+			it('should works', async () => {
+				const res = await hooks.trigger();
+
+				// @ts-expect-error
+				expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					onChunk: expect.any(Function)
+				});
+
+				expect(hooks.callWebhook).toHaveBeenCalledOnce();
+				expect(hooks.callWebhook).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'SCHEDULED',
+					forkId: null,
+					forkOnly: false,
+					keys: expect.arrayContaining(
+						_.map(tasks.slice(0, 2), task => {
+							return {
+								id: task.id,
+								namespace: task.namespace
+							};
+						})
+					),
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
+
+				expect(res).toEqual({
+					processed: 2,
+					errors: 0
+				});
 			});
 
-			expect(hooks.callWebhook).toHaveBeenCalledWith({
-				date: expect.any(Date),
-				conditionData: null,
-				eventDelayDebounce: null,
-				eventDelayUnit: null,
-				eventDelayValue: null,
-				executionType: 'EVENT',
-				forkId: null,
-				forkOnly: false,
-				keys: expect.arrayContaining(
-					_.map(tasks.slice(0, 2), task => {
-						return {
-							id: task.id,
-							namespace: task.namespace
-						};
-					})
-				),
-				requestBody: null,
-				requestHeaders: null,
-				requestMethod: null,
-				requestUrl: null,
-				ruleId: null
-			});
+			it('should process in chunks when webhookChunkSize is set', async () => {
+				// Set webhookChunkSize
+				hooks.webhookChunkSize = 1;
 
-			expect(res).toEqual({
-				processed: 2,
-				errors: 0
-			});
-		});
+				const res = await hooks.trigger();
 
-		it('should works EVENT by eventPattern with [requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
-			const res = await hooks.trigger({
-				eventPattern: 'event-pattern-',
-				eventPatternPrefix: true,
-				namespace: 'spec',
-				requestBody: { a: 1, b: 2 },
-				requestHeaders: { a: '1', b: '2' },
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything-2'
-			});
+				// @ts-expect-error
+				expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
+					date: expect.any(Date),
+					onChunk: expect.any(Function)
+				});
 
-			expect(hooks.callWebhook).toHaveBeenCalledWith({
-				date: expect.any(Date),
-				conditionData: null,
-				eventDelayDebounce: null,
-				eventDelayUnit: null,
-				eventDelayValue: null,
-				executionType: 'EVENT',
-				forkId: null,
-				forkOnly: false,
-				keys: expect.arrayContaining(
-					_.map(tasks.slice(0, 2), task => {
-						return {
-							id: task.id,
-							namespace: task.namespace
-						};
-					})
-				),
-				requestBody: { a: 1, b: 2 },
-				requestHeaders: { a: '1', b: '2' },
-				requestMethod: 'POST',
-				requestUrl: 'https://httpbin.org/anything-2',
-				ruleId: null
-			});
+				expect(hooks.callWebhook).toHaveBeenCalledTimes(2);
+				expect(hooks.callWebhook).toHaveBeenNthCalledWith(1, {
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'SCHEDULED',
+					forkId: null,
+					forkOnly: false,
+					keys: [
+						{
+							id: tasks[0].id,
+							namespace: tasks[0].namespace
+						}
+					],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
 
-			expect(res).toEqual({
-				processed: 2,
-				errors: 0
-			});
-		});
+				expect(hooks.callWebhook).toHaveBeenNthCalledWith(2, {
+					date: expect.any(Date),
+					conditionData: null,
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'SCHEDULED',
+					forkId: null,
+					forkOnly: false,
+					keys: [
+						{
+							id: tasks[1].id,
+							namespace: tasks[1].namespace
+						}
+					],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: null,
+					requestUrl: null,
+					ruleId: null
+				});
 
-		it('should works EVENT by id', async () => {
-			const res = await hooks.trigger({
-				id: 'id',
-				namespace: 'spec'
-			});
-
-			// @ts-expect-error
-			expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
-				date: expect.any(Date),
-				id: 'id',
-				namespace: 'spec',
-				onChunk: expect.any(Function)
-			});
-
-			expect(hooks.callWebhook).toHaveBeenCalledWith({
-				date: expect.any(Date),
-				conditionData: null,
-				eventDelayDebounce: null,
-				eventDelayUnit: null,
-				eventDelayValue: null,
-				executionType: 'EVENT',
-				forkId: null,
-				forkOnly: false,
-				keys: [],
-				requestBody: null,
-				requestHeaders: null,
-				requestMethod: null,
-				requestUrl: null,
-				ruleId: null
-			});
-
-			expect(res).toEqual({
-				processed: 0,
-				errors: 0
+				expect(res).toEqual({
+					processed: 2,
+					errors: 0
+				});
 			});
 		});
 	});
