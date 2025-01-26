@@ -407,6 +407,7 @@ describe('/index.ts', () => {
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
+					ruleId: '',
 					taskId: task.id,
 					taskType: 'PRIMARY'
 				},
@@ -496,6 +497,7 @@ describe('/index.ts', () => {
 				metadata: {
 					executionType: 'EVENT',
 					forkId: 'fork-id',
+					ruleId: '',
 					taskId: task.id,
 					taskType: 'FORK'
 				},
@@ -596,6 +598,7 @@ describe('/index.ts', () => {
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
+					ruleId: '',
 					taskId: task.id,
 					taskType: 'PRIMARY'
 				},
@@ -760,6 +763,7 @@ describe('/index.ts', () => {
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
+					ruleId: '',
 					taskId: task.id,
 					taskType: 'PRIMARY'
 				},
@@ -958,6 +962,7 @@ describe('/index.ts', () => {
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
+					ruleId: '',
 					taskId: task.id,
 					taskType: 'PRIMARY'
 				},
@@ -1089,6 +1094,7 @@ describe('/index.ts', () => {
 					metadata: {
 						executionType: 'EVENT',
 						forkId: 'fork-id',
+						ruleId: '',
 						taskId: task.id,
 						taskType: 'FORK'
 					},
@@ -1235,6 +1241,7 @@ describe('/index.ts', () => {
 					metadata: {
 						executionType: 'EVENT',
 						forkId: 'fork-id',
+						ruleId: '',
 						taskId: task.id,
 						taskType: 'FORK'
 					},
@@ -1648,6 +1655,7 @@ describe('/index.ts', () => {
 					metadata: {
 						executionType: 'SCHEDULED',
 						forkId: '',
+						ruleId: '',
 						taskId: task.id,
 						taskType: 'SUBTASK'
 					},
@@ -1737,6 +1745,7 @@ describe('/index.ts', () => {
 					metadata: {
 						executionType: 'SCHEDULED',
 						forkId: 'fork-id',
+						ruleId: '',
 						taskId: task.id,
 						taskType: 'SUBTASK'
 					},
@@ -1865,6 +1874,7 @@ describe('/index.ts', () => {
 					metadata: {
 						executionType: 'EVENT',
 						forkId: '',
+						ruleId: 'rule-id-1',
 						taskId: task.id,
 						taskType: 'PRIMARY'
 					},
@@ -1979,6 +1989,7 @@ describe('/index.ts', () => {
 					metadata: {
 						executionType: 'EVENT',
 						forkId: '',
+						ruleId: 'rule-id-2',
 						taskId: task.id,
 						taskType: 'PRIMARY'
 					},

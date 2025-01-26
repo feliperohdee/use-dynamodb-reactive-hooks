@@ -323,6 +323,7 @@ class Hooks {
 									metadata: {
 										executionType: args.executionType,
 										forkId: task!.forkId,
+										ruleId: args.ruleId || task!.ruleId,
 										taskId: task!.primaryId,
 										taskType: type
 									},
@@ -379,6 +380,7 @@ class Hooks {
 							metadata: {
 								executionType: args.executionType,
 								forkId: task.forkId,
+								ruleId: '',
 								taskId: task.primaryId,
 								taskType: type
 							},
