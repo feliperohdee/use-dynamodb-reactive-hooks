@@ -1868,6 +1868,13 @@ use-qs@^1.0.1:
   dependencies:
     lodash "^4.17.21"
 
+use-zod-default@^1.0.1:
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/use-zod-default/-/use-zod-default-1.0.1.tgz#9bc52f8856886d48fbe6bb31d21257c3e206c568"
+  integrity sha512-hzukYfF+3p8kFhEiXWCXoCyFrHgHZXESCMAz3lXV/6hxd7LnLODJj4s3EfewcgqP8SrJiEDUFM89a9KKJI3SjQ==
+  dependencies:
+    zod "^3.23.8"
+
 uuid@^9.0.1:
   version "9.0.1"
   resolved "https://registry.yarnpkg.com/uuid/-/uuid-9.0.1.tgz#e188d4c8853cc722220392c424cd637f32293f30"
@@ -1954,7 +1961,7 @@ wrap-ansi@^8.1.0:
     string-width "^5.0.1"
     strip-ansi "^7.0.1"
 
-zod-default-instance@^1.0.12, zod-default-instance@^1.0.15:
+zod-default-instance@^1.0.12:
   version "1.0.15"
   resolved "https://registry.yarnpkg.com/zod-default-instance/-/zod-default-instance-1.0.15.tgz#da51df1353af25726f246ae71276b713f7dfa971"
   integrity sha512-7nnZWssRIZuZuWt41ODbD2D4s1OsLZlQd+Ya0kCQk7Ao/si7pNtx8YEK5KZ4ZOHd0/5insU1AuILL1aD2jufSg==
