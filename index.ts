@@ -3,8 +3,8 @@ import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAllSettled, promiseMap, promiseReduce } from 'use-async-helpers';
 import { TransactWriteCommandOutput } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
+import FilterCriteria from 'use-filter-criteria';
 import HttpError from 'use-http-error';
-import UseFilterCriteria from 'use-filter-criteria';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 import zDefault from 'zod-default-instance';
@@ -57,7 +57,7 @@ namespace Hooks {
 	export type TaskType = z.infer<typeof schema.taskType>;
 	export type TimeUnit = z.infer<typeof schema.timeUnit>;
 	export type TriggerInput = z.input<typeof schema.triggerInput>;
-	export type TriggerInputConditionFilter = UseFilterCriteria.MatchInput;
+	export type TriggerInputConditionFilter = FilterCriteria.MatchInput;
 	export type UpdateTaskInput = z.input<typeof schema.updateTaskInput>;
 }
 
@@ -218,7 +218,7 @@ class Hooks {
 			}
 
 			if (task.conditionFilter) {
-				const match = await UseFilterCriteria.match(args.conditionData, task.conditionFilter);
+				const match = await FilterCriteria.match(args.conditionData, task.conditionFilter);
 
 				if (!match) {
 					continue;
@@ -497,7 +497,7 @@ class Hooks {
 		return count;
 	}
 
-	async debugCondition(input: Hooks.DebugConditionInput): Promise<UseFilterCriteria.MatchDetailedResult> {
+	async debugCondition(input: Hooks.DebugConditionInput): Promise<FilterCriteria.MatchDetailedResult> {
 		const args = await schema.debugConditionInput.parseAsync(input);
 		const task = await this.getTaskInternal({
 			id: args.id,
@@ -512,7 +512,7 @@ class Hooks {
 			throw new TaskException('Task has no condition filter');
 		}
 
-		return UseFilterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<UseFilterCriteria.MatchDetailedResult>;
+		return FilterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<FilterCriteria.MatchDetailedResult>;
 	}
 
 	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task> {

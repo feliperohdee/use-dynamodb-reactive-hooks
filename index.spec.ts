@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import FilterCriteria from 'use-filter-criteria';
 import z from 'zod';
 
 import Hooks, { SUBTASK_TTL_IN_MS, TaskException, taskShape } from './index';
@@ -550,12 +551,12 @@ describe('/index.ts', () => {
 		it('should works with [matched conditionData, requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
 			task = await hooks.registerTask(
 				createTestTask(0, {
-					conditionFilter: {
+					conditionFilter: FilterCriteria.criteria({
 						matchValue: 'value',
 						operator: 'EQUALS',
 						type: 'STRING',
 						valuePath: ['key']
-					}
+					})
 				})
 			);
 
@@ -651,12 +652,12 @@ describe('/index.ts', () => {
 		it('should works with [unmatched conditionData, requestBody, requestHeaders, requestMethod, requestUrl]', async () => {
 			task = await hooks.registerTask(
 				createTestTask(0, {
-					conditionFilter: {
+					conditionFilter: FilterCriteria.criteria({
 						matchValue: 'value',
 						operator: 'EQUALS',
 						type: 'STRING',
 						valuePath: ['key']
-					}
+					})
 				})
 			);
 
@@ -2211,12 +2212,12 @@ describe('/index.ts', () => {
 		beforeAll(async () => {
 			task = await hooks.registerTask(
 				createTestTask(0, {
-					conditionFilter: {
+					conditionFilter: FilterCriteria.criteria({
 						matchValue: 'value',
 						operator: 'EQUALS',
 						type: 'STRING',
 						valuePath: ['key']
-					}
+					})
 				})
 			);
 		});
@@ -2235,7 +2236,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				matchValue: 'value',
 				passed: true,
-				reason: 'String criteria "EQUALS" check PASSED',
+				reason: 'STRING criteria "EQUALS" check PASSED',
 				value: 'value'
 			});
 		});
@@ -2250,7 +2251,7 @@ describe('/index.ts', () => {
 			expect(res).toEqual({
 				matchValue: 'value',
 				passed: false,
-				reason: 'String criteria "EQUALS" check FAILED',
+				reason: 'STRING criteria "EQUALS" check FAILED',
 				value: ''
 			});
 		});
@@ -4674,12 +4675,12 @@ describe('/index.ts', () => {
 
 		beforeEach(async () => {
 			task = await hooks.registerTask({
-				conditionFilter: {
+				conditionFilter: FilterCriteria.criteria({
 					matchValue: 'value',
 					operator: 'EQUALS',
 					type: 'STRING',
 					valuePath: ['key']
-				},
+				}),
 				description: 'description',
 				eventDelayDebounce: true,
 				eventDelayUnit: 'minutes',
@@ -4752,15 +4753,15 @@ describe('/index.ts', () => {
 					__ts: 0,
 					__updatedAt: '',
 					concurrency: false,
-					conditionFilter: {
+					conditionFilter: FilterCriteria.criteria({
 						defaultValue: '',
 						matchValue: 'value',
 						normalize: true,
 						operator: 'EQUALS',
 						type: 'STRING',
-						valuePath: ['key'],
-						valueTransformer: null
-					},
+						valueMapper: null,
+						valuePath: ['key']
+					}),
 					description: 'description',
 					eventDelayDebounce: true,
 					eventDelayUnit: 'minutes',
@@ -4818,15 +4819,15 @@ describe('/index.ts', () => {
 				__updatedAt: expect.any(String),
 				concurrency: false,
 				description: 'description',
-				conditionFilter: {
+				conditionFilter: FilterCriteria.criteria({
 					defaultValue: '',
 					matchValue: 'value',
 					normalize: true,
 					operator: 'EQUALS',
 					type: 'STRING',
-					valuePath: ['key'],
-					valueTransformer: null
-				},
+					valueMapper: null,
+					valuePath: ['key']
+				}),
 				eventDelayDebounce: true,
 				eventDelayUnit: 'minutes',
 				eventDelayValue: 30,
@@ -7727,12 +7728,12 @@ describe('/index.ts', () => {
 
 			const res = await hooks.updateTask({
 				concurrency: !task.concurrency,
-				conditionFilter: {
+				conditionFilter: FilterCriteria.criteria({
 					matchValue: 'value',
 					operator: 'EQUALS',
 					type: 'STRING',
 					valuePath: ['key']
-				},
+				}),
 				description: 'updated',
 				eventDelayDebounce: !task.eventDelayDebounce,
 				eventDelayUnit: task.eventDelayUnit === 'minutes' ? 'hours' : 'minutes',
@@ -7818,12 +7819,13 @@ describe('/index.ts', () => {
 							':concurrency': true,
 							':conditionFilter': {
 								defaultValue: '',
+								matchInArray: true,
 								matchValue: 'value',
 								normalize: true,
 								operator: 'EQUALS',
 								type: 'STRING',
 								valuePath: ['key'],
-								valueTransformer: null
+								valueMapper: null
 							},
 							':description': 'updated',
 							':eventDelayDebounce': true,
@@ -7915,12 +7917,12 @@ describe('/index.ts', () => {
 
 			const res = await hooks.updateTask({
 				concurrency: !task.concurrency,
-				conditionFilter: {
+				conditionFilter: FilterCriteria.criteria({
 					matchValue: 'value',
 					operator: 'EQUALS',
 					type: 'STRING',
 					valuePath: ['key']
-				},
+				}),
 				description: 'updated',
 				eventDelayDebounce: !task.eventDelayDebounce,
 				eventDelayUnit: task.eventDelayUnit === 'minutes' ? 'hours' : 'minutes',
@@ -7992,12 +7994,13 @@ describe('/index.ts', () => {
 								':concurrency': true,
 								':conditionFilter': {
 									defaultValue: '',
+									matchInArray: true,
 									matchValue: 'value',
 									normalize: true,
 									operator: 'EQUALS',
 									type: 'STRING',
-									valuePath: ['key'],
-									valueTransformer: null
+									valueMapper: null,
+									valuePath: ['key']
 								},
 								':description': 'updated',
 								':eventDelayDebounce': true,
