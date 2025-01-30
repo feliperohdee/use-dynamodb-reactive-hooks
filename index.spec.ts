@@ -4759,7 +4759,6 @@ describe('/index.ts', () => {
 						normalize: true,
 						operator: 'EQUALS',
 						type: 'STRING',
-						valueMapper: null,
 						valuePath: ['key']
 					}),
 					description: 'description',
@@ -4825,7 +4824,6 @@ describe('/index.ts', () => {
 					normalize: true,
 					operator: 'EQUALS',
 					type: 'STRING',
-					valueMapper: null,
 					valuePath: ['key']
 				}),
 				eventDelayDebounce: true,
