@@ -1,5 +1,5 @@
-import _, { keys } from 'lodash';
-import UseFilterCriteria from 'use-filter-criteria';
+import _ from 'lodash';
+import FilterCriteria from 'use-filter-criteria';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
 
@@ -31,7 +31,7 @@ const task = z.object({
 	__ts: z.number(),
 	__updatedAt: z.string().datetime(),
 	concurrency: z.boolean(),
-	conditionFilter: UseFilterCriteria.schema.matchInput.nullable(),
+	conditionFilter: FilterCriteria.schema.matchInput.nullable(),
 	description: z.string(),
 	eventDelayDebounce: z.boolean(),
 	eventDelayUnit: timeUnit,
@@ -367,7 +367,7 @@ const updateTaskInput = z
 		id: z.string(),
 		namespace: z.string(),
 		concurrency: z.boolean().optional(),
-		conditionFilter: UseFilterCriteria.schema.matchInput.optional(),
+		conditionFilter: FilterCriteria.schema.matchInput.optional(),
 		description: z.string().optional(),
 		eventDelayDebounce: z.boolean().optional(),
 		eventDelayUnit: timeUnit.optional(),

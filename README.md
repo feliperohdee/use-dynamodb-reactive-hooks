@@ -15,6 +15,7 @@ A powerful TypeScript library for orchestrating dynamic, event-driven, and sched
 - 🕒 Built-in timestamp management.
 - 📝 Comprehensive error tracking with detailed error messages and timestamps.
 - 🔎 Rich querying capabilities by namespace, status, time ranges, event patterns, and IDs.
+- 🔍 Filtering capabilities with configurable filter criteria.
 - 🏃 Concurrent webhook execution with configurable limits.
 - 📦 Batch operations support for efficient updates and deletions.
 - 🔄 Configurable webhook chunk processing for optimal performance and resource management.
@@ -44,6 +45,7 @@ import Hooks from 'use-dynamodb-reactive-hooks';
 const hooks = new Hooks({
 	accessKeyId: 'YOUR_ACCESS_KEY',
 	createTable: true, // Optional: automatically create table
+	filterCriteria: new FilterCriteria(), // Optional: custom filter criteria implementation
 	logsTableName: 'YOUR_LOGS_TABLE_NAME',
 	logsTtlInSeconds: 86400, // Optional: TTL for log entries (default: forever)
 	maxConcurrency: 25, // Optional: concurrent webhook execution limit (default: 25)

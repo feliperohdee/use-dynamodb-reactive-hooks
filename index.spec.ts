@@ -7816,6 +7816,8 @@ describe('/index.ts', () => {
 						_.isEqual(item.Update!.ExpressionAttributeValues, {
 							':concurrency': true,
 							':conditionFilter': {
+								alias: '',
+								criteriaMapper: null,
 								defaultValue: '',
 								matchInArray: true,
 								matchValue: 'value',
@@ -7991,6 +7993,8 @@ describe('/index.ts', () => {
 								':updatedAt': expect.any(String),
 								':concurrency': true,
 								':conditionFilter': {
+									alias: '',
+									criteriaMapper: null,
 									defaultValue: '',
 									matchInArray: true,
 									matchValue: 'value',

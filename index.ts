@@ -21,6 +21,7 @@ namespace Hooks {
 	export type ConstructorOptions = {
 		accessKeyId: string;
 		createTable?: boolean;
+		filterCriteria?: FilterCriteria;
 		logsTableName: string;
 		logsTtlInSeconds?: number;
 		maxConcurrency?: number;
@@ -77,6 +78,7 @@ class Hooks {
 
 	public customWebhookCall?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
 	public db: { tasks: Dynamodb<Hooks.Task> };
+	public filterCriteria: FilterCriteria;
 	public maxConcurrency: number;
 	public maxErrors: number;
 	public rules: Map<string, Hooks.TaskRule>;
@@ -174,6 +176,7 @@ class Hooks {
 
 		this.customWebhookCall = options.webhookCaller;
 		this.db = { tasks };
+		this.filterCriteria = options.filterCriteria || new FilterCriteria();
 		this.maxConcurrency = options.maxConcurrency || DEFAULT_MAX_CONCURRENCY;
 		this.maxErrors = options.maxErrors || 5;
 		this.rules = new Map();
@@ -218,7 +221,7 @@ class Hooks {
 			}
 
 			if (task.conditionFilter) {
-				const match = await FilterCriteria.match(args.conditionData, task.conditionFilter);
+				const match = await this.filterCriteria.match(args.conditionData, task.conditionFilter);
 
 				if (!match) {
 					continue;
@@ -512,7 +515,7 @@ class Hooks {
 			throw new TaskException('Task has no condition filter');
 		}
 
-		return FilterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<FilterCriteria.MatchDetailedResult>;
+		return this.filterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<FilterCriteria.MatchDetailedResult>;
 	}
 
 	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task> {
