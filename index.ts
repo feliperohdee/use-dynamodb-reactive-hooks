@@ -7,7 +7,7 @@ import FilterCriteria from 'use-filter-criteria';
 import HttpError from 'use-http-error';
 import Webhooks from 'use-dynamodb-webhooks';
 import z from 'zod';
-import zDefault from 'zod-default-instance';
+import zDefault from 'use-zod-default';
 
 import * as schema from './index.schema';
 
