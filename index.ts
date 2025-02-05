@@ -180,8 +180,8 @@ class Hooks {
 		this.maxConcurrency = options.maxConcurrency || DEFAULT_MAX_CONCURRENCY;
 		this.maxErrors = options.maxErrors || 5;
 		this.rules = new Map();
-		this.webhooks = webhooks;
 		this.webhookChunkSize = options.webhookChunkSize || 0;
+		this.webhooks = webhooks;
 	}
 
 	private calculateNextSchedule(currentTime: string, rule: { unit: Hooks.TimeUnit; value: number }): string {
@@ -727,7 +727,6 @@ class Hooks {
 		// QUERY BY ID
 		if (args.id) {
 			let id = args.id;
-			let prefix = false;
 
 			if (args.fork) {
 				id = await this.uuidFromString(args.id);
@@ -745,7 +744,7 @@ class Hooks {
 
 			queryOptions.queryExpression = '#namespace = :namespace AND #id = :id';
 
-			if (prefix) {
+			if (args.idPrefix) {
 				queryOptions.queryExpression = '#namespace = :namespace AND begins_with(#id, :id)';
 			}
 
@@ -813,16 +812,16 @@ class Hooks {
 
 	async getTask(input: Hooks.GetTaskInput): Promise<Hooks.Task> {
 		const args = await schema.getTaskInput.parseAsync(input);
-
-		let [id, namespace] = [args.id, args.namespace];
-
-		if (args.fork) {
-			id = await this.uuidFromString(args.id);
-			namespace = `${args.namespace}#FORK`;
-		}
-
 		const res = await this.db.tasks.get({
-			item: { namespace, id }
+			item: args.fork
+				? {
+						id: await this.uuidFromString(args.id),
+						namespace: `${args.namespace}#FORK`
+					}
+				: {
+						id: args.id,
+						namespace: args.namespace
+					}
 		});
 
 		if (!res) {
@@ -1073,7 +1072,7 @@ class Hooks {
 	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
 		const args = await schema.taskInput.parseAsync(input);
 		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : '-';
-		const id = this.uuid();
+		const id = args.id || this.uuid();
 
 		return this.db.tasks.put(
 			taskShape({
@@ -1562,6 +1561,10 @@ class Hooks {
 				await this.queryActiveTasks({
 					...queryActiveTasksOptions,
 					onChunk: async ({ items }) => {
+						if (_.size(items) === 0) {
+							return;
+						}
+
 						const callWebhookInput: Hooks.CallWebhookInput = {
 							conditionData: args.conditionData || null,
 							eventDelayDebounce: args.eventDelayDebounce || null,

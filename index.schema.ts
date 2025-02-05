@@ -21,6 +21,11 @@ const optionalRequestInput = z
 	.partial();
 
 const taskExecutionType = z.enum(['EVENT', 'SCHEDULED']);
+const taskId = z.union([
+	z.literal(''),
+	// uuid with optional namespace and optional suffix
+	z.string().regex(/^([a-zA-Z0-9]+#)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(#.*)?$/)
+]);
 const taskKeys = z.object({ id: z.string(), namespace: z.string() });
 const taskStatus = z.enum(['ACTIVE', 'DISABLED', 'MAX-ERRORS-REACHED', 'MAX-REPEAT-REACHED', 'PROCESSING']);
 const taskType = z.enum(['PRIMARY', 'FORK', 'SUBTASK']);
@@ -41,7 +46,7 @@ const task = z.object({
 	firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
 	firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
 	forkId: z.string(),
-	id: z.string(),
+	id: taskId,
 	lastError: z.string(),
 	lastErrorDate: z.union([z.string().datetime(), z.literal('')]),
 	lastErrorExecutionType: z.union([z.literal(''), taskExecutionType]),
@@ -103,7 +108,6 @@ const taskInput = task
 		__createdAt: true,
 		__ts: true,
 		__updatedAt: true,
-		id: true,
 		firstErrorDate: true,
 		firstExecutionDate: true,
 		firstScheduledDate: true,
@@ -136,6 +140,7 @@ const taskInput = task
 		eventDelayUnit: true,
 		eventDelayValue: true,
 		eventPattern: true,
+		id: true,
 		noAfter: true,
 		noBefore: true,
 		repeatInterval: true,
@@ -185,7 +190,7 @@ const checkExecuteTaskInput = z.object({
 
 const debugConditionInput = z.object({
 	conditionData: z.record(z.any()).nullable(),
-	id: z.string(),
+	id: taskId,
 	namespace: z.string()
 });
 
@@ -205,6 +210,7 @@ const fetchTasksInput = z
 		fork: z.boolean().default(false),
 		fromScheduledDate: z.string().datetime({ offset: true }).optional(),
 		id: z.string().optional(),
+		idPrefix: z.boolean().default(false),
 		limit: z.number().min(1).default(100),
 		namespace: z.string(),
 		onChunk: z
@@ -289,7 +295,7 @@ const queryActiveTasksInput = z.union([
 		namespace: z.string()
 	}),
 	queryActiveTasksInputBase.extend({
-		id: z.string(),
+		id: taskId,
 		namespace: z.string()
 	}),
 	queryActiveTasksInputBase
@@ -340,7 +346,7 @@ const triggerInput = z.union([
 			eventDelayValue: z.number().min(0).optional(),
 			forkId: z.string().optional(),
 			forkOnly: z.boolean().optional(),
-			id: z.string(),
+			id: taskId,
 			namespace: z.string(),
 			ruleId: z.string().optional()
 		})

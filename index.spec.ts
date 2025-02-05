@@ -173,7 +173,8 @@ describe('/index.ts', () => {
 					date: new Date(),
 					task: {
 						...task,
-						id: 'inexistent-id'
+						// @ts-expect-error
+						id: await hooks.uuidFromString('inexistent-id')
 					}
 				});
 
@@ -816,7 +817,13 @@ describe('/index.ts', () => {
 				executionType: 'EVENT',
 				forkId: null,
 				forkOnly: false,
-				keys: [{ id: 'inexistent-id', namespace: 'spec' }],
+				keys: [
+					{
+						// @ts-expect-error
+						id: await hooks.uuidFromString('inexistent-id'),
+						namespace: 'spec'
+					}
+				],
 				requestBody: null,
 				requestHeaders: null,
 				requestMethod: 'POST',
@@ -825,7 +832,11 @@ describe('/index.ts', () => {
 			});
 
 			// @ts-expect-error
-			expect(hooks.getTaskInternal).toHaveBeenCalledWith({ id: 'inexistent-id', namespace: 'spec' });
+			expect(hooks.getTaskInternal).toHaveBeenCalledWith({
+				// @ts-expect-error
+				id: await hooks.uuidFromString('inexistent-id'),
+				namespace: 'spec'
+			});
 			// @ts-expect-error
 			expect(hooks.registerForkTask).not.toHaveBeenCalled();
 			// @ts-expect-error
@@ -2260,7 +2271,8 @@ describe('/index.ts', () => {
 			try {
 				await hooks.debugCondition({
 					conditionData: { key: 'value' },
-					id: 'inexistent-id',
+					// @ts-expect-error
+					id: await hooks.uuidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -2306,7 +2318,8 @@ describe('/index.ts', () => {
 		it('should throw if task is not found', async () => {
 			try {
 				await hooks.deleteTask({
-					id: 'non-existent-id',
+					// @ts-expect-error
+					id: await hooks.uuidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -3027,6 +3040,37 @@ describe('/index.ts', () => {
 				});
 			});
 
+			it('should fetch by [namespace, id (prefix)]', async () => {
+				const res = await hooks.fetchTasks({
+					id: tasks[0].id,
+					idPrefix: true,
+					namespace: 'spec'
+				});
+
+				expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+					attributeNames: {
+						'#id': 'id',
+						'#namespace': 'namespace'
+					},
+					attributeValues: {
+						':id': tasks[0].id,
+						':namespace': 'spec'
+					},
+					filterExpression: '',
+					limit: 100,
+					queryExpression: '#namespace = :namespace AND begins_with(#id, :id)',
+					scanIndexForward: true,
+					select: ['description', 'eventPattern', 'forkId', 'id', 'namespace', 'scheduledDate', 'status', 'title'],
+					startKey: null
+				});
+
+				expect(res).toEqual({
+					count: 1,
+					items: expect.arrayContaining(pick([tasks[0]])),
+					lastEvaluatedKey: null
+				});
+			});
+
 			it('should fetch forks by [namespace, id]', async () => {
 				const res = await hooks.fetchTasks({
 					fork: true,
@@ -3351,7 +3395,8 @@ describe('/index.ts', () => {
 				// @ts-expect-error
 				await hooks.getSubTaskParent({
 					...subTasks[0],
-					id: 'non-existent-id'
+					// @ts-expect-error
+					id: await hooks.uuidFromString('inexistent-id')
 				});
 
 				throw new Error('Expected to throw');
@@ -3407,7 +3452,8 @@ describe('/index.ts', () => {
 		it('should throw if task is not found', async () => {
 			try {
 				await hooks.getTask({
-					id: 'non-existent-id',
+					// @ts-expect-error
+					id: await hooks.uuidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -5108,6 +5154,66 @@ describe('/index.ts', () => {
 			});
 		});
 
+		it('should create task with id', async () => {
+			const res = await hooks.registerTask({
+				id: 'abc#12345678-1234-1234-1234-123456789012',
+				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__ts: expect.any(Number),
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				conditionFilter: null,
+				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
+				eventPattern: '-',
+				firstErrorDate: '',
+				firstExecutionDate: '',
+				firstScheduledDate: '',
+				forkId: '',
+				id: 'abc#12345678-1234-1234-1234-123456789012',
+				lastError: '',
+				lastErrorDate: '',
+				lastErrorExecutionType: '',
+				lastExecutionDate: '',
+				lastExecutionType: '',
+				lastResponseBody: '',
+				lastResponseHeaders: null,
+				lastResponseStatus: 0,
+				namespace: 'spec',
+				namespace__eventPattern: '-',
+				noAfter: '',
+				noBefore: '',
+				pid: '',
+				primaryId: expect.any(String),
+				primaryNamespace: 'spec',
+				repeatInterval: 0,
+				repeatMax: 0,
+				repeatUnit: 'minutes',
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/anything',
+				rescheduleOnEvent: true,
+				retryLimit: 3,
+				ruleId: '',
+				scheduledDate: '-',
+				status: 'ACTIVE',
+				title: '',
+				totalErrors: 0,
+				totalExecutions: 0,
+				totalFailedExecutions: 0,
+				totalSuccessfulExecutions: 0,
+				type: 'PRIMARY',
+				ttl: 0
+			});
+		});
+
 		it('should create task by [eventPattern, noAfter, noBefore, ruleId, scheduledDate]', async () => {
 			const currentYear = new Date().getFullYear();
 			const res = await hooks.registerTask({
@@ -5193,7 +5299,8 @@ describe('/index.ts', () => {
 			try {
 				await hooks.setTaskActive({
 					active: false,
-					id: 'non-existent-id',
+					// @ts-expect-error
+					id: await hooks.uuidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -7291,7 +7398,7 @@ describe('/index.ts', () => {
 						requestMethod: 'GET'
 					})
 				),
-				hooks.registerTask(createTestTask(1000))
+				hooks.registerTask(createTestTask(60000))
 			]);
 
 			vi.spyOn(hooks, 'callWebhook');
@@ -7386,36 +7493,21 @@ describe('/index.ts', () => {
 
 			it('should works by id', async () => {
 				const res = await hooks.trigger({
-					id: 'id',
+					// @ts-expect-error
+					id: await hooks.uuidFromString('id'),
 					namespace: 'spec'
 				});
 
 				// @ts-expect-error
 				expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
 					date: expect.any(Date),
-					id: 'id',
+					// @ts-expect-error
+					id: await hooks.uuidFromString('id'),
 					namespace: 'spec',
 					onChunk: expect.any(Function)
 				});
 
-				expect(hooks.callWebhook).toHaveBeenCalledOnce();
-				expect(hooks.callWebhook).toHaveBeenCalledWith({
-					date: expect.any(Date),
-					conditionData: null,
-					eventDelayDebounce: null,
-					eventDelayUnit: null,
-					eventDelayValue: null,
-					executionType: 'EVENT',
-					forkId: null,
-					forkOnly: false,
-					keys: [],
-					requestBody: null,
-					requestHeaders: null,
-					requestMethod: null,
-					requestUrl: null,
-					ruleId: null
-				});
-
+				expect(hooks.callWebhook).not.toHaveBeenCalled();
 				expect(res).toEqual({
 					processed: 0,
 					errors: 0
@@ -7537,7 +7629,7 @@ describe('/index.ts', () => {
 				});
 
 				expect(hooks.callWebhook).toHaveBeenCalledTimes(2);
-				expect(hooks.callWebhook).toHaveBeenNthCalledWith(1, {
+				expect(hooks.callWebhook).toHaveBeenCalledWith({
 					date: expect.any(Date),
 					conditionData: null,
 					eventDelayDebounce: null,
@@ -7559,7 +7651,7 @@ describe('/index.ts', () => {
 					ruleId: null
 				});
 
-				expect(hooks.callWebhook).toHaveBeenNthCalledWith(2, {
+				expect(hooks.callWebhook).toHaveBeenCalledWith({
 					date: expect.any(Date),
 					conditionData: null,
 					eventDelayDebounce: null,
