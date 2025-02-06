@@ -1852,7 +1852,7 @@ class Hooks {
 		return crypto.randomUUID();
 	}
 
-	private async uuidFromString(input: string): Promise<string> {
+	async uuidFromString(input: string): Promise<string> {
 		const encoder = new TextEncoder();
 		const data = encoder.encode(input);
 
