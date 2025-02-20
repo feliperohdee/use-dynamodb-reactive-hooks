@@ -129,6 +129,33 @@ const deleteInput = z.object({
 });
 
 const fetchLogsInput = Webhooks.schema.fetchLogsInput;
+const fetchTasksByPrimaryTaskInput = z.object({
+	chunkLimit: z.number().min(1).optional(),
+	desc: z.boolean().default(false),
+	limit: z.number().min(1).default(100),
+	onChunk: z
+		.function()
+		.args(
+			z.object({
+				count: z.number(),
+				items: z.array(
+					task.pick({
+						id: true,
+						namespace: true,
+						primaryId: true,
+						primaryNamespace: true,
+						type: true
+					})
+				)
+			})
+		)
+		.returns(z.promise(z.void()))
+		.optional(),
+	primaryId: z.string().optional(),
+	primaryNamespace: z.string(),
+	startKey: z.record(z.any()).nullable().default(null)
+});
+
 const fetchTasksInput = z
 	.object({
 		chunkLimit: z.number().min(1).optional(),
@@ -419,6 +446,7 @@ export {
 	debugConditionInput,
 	deleteInput,
 	fetchLogsInput,
+	fetchTasksByPrimaryTaskInput,
 	fetchTasksInput,
 	fetchTasksResponse,
 	getTaskInput,

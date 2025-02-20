@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { promiseAllSettled, promiseMap, promiseReduce } from 'use-async-helpers';
+import { promiseAllSettled, promiseMap } from 'use-async-helpers';
 import { TransactWriteCommandOutput } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import FilterCriteria from 'use-filter-criteria';
@@ -38,6 +38,7 @@ namespace Hooks {
 	export type DebugConditionInput = z.input<typeof schema.debugConditionInput>;
 	export type DeleteInput = z.input<typeof schema.deleteInput>;
 	export type FetchLogsInput = z.input<typeof schema.fetchLogsInput>;
+	export type FetchTasksByPrimaryTaskInput = z.input<typeof schema.fetchTasksByPrimaryTaskInput>;
 	export type FetchTasksInput = z.input<typeof schema.fetchTasksInput>;
 	export type FetchTasksResponse = z.infer<typeof schema.fetchTasksResponse>;
 	export type GetTaskInput = z.input<typeof schema.getTaskInput>;
@@ -113,7 +114,7 @@ class Hooks {
 					sort: 'scheduledDate',
 					sortType: 'S'
 				},
-				// used to delete/setActive for tasks by primary namespace / primaryId
+				// used to fetch tasks by primary namespace / primaryId
 				{
 					name: 'primary-namespace-primary-id',
 					partition: 'primaryNamespace',
@@ -223,7 +224,7 @@ class Hooks {
 			if (task.conditionFilter) {
 				const match = await this.filterCriteria.match(args.conditionData, task.conditionFilter);
 
-				if (!match) {
+				if (!match.passed) {
 					continue;
 				}
 			}
@@ -501,7 +502,7 @@ class Hooks {
 		return count;
 	}
 
-	async debugCondition(input: Hooks.DebugConditionInput): Promise<FilterCriteria.MatchDetailedResult> {
+	async debugCondition(input: Hooks.DebugConditionInput): Promise<FilterCriteria.MatchResult> {
 		const args = await schema.debugConditionInput.parseAsync(input);
 		const task = await this.getTaskInternal({
 			id: args.id,
@@ -516,7 +517,7 @@ class Hooks {
 			throw new TaskException('Task has no condition filter');
 		}
 
-		return this.filterCriteria.match(args.conditionData, task.conditionFilter, true) as Promise<FilterCriteria.MatchDetailedResult>;
+		return this.filterCriteria.match(args.conditionData, task.conditionFilter);
 	}
 
 	async deleteTask(input: Hooks.DeleteInput): Promise<Hooks.Task> {
@@ -541,80 +542,28 @@ class Hooks {
 			throw new TaskException('Task must be a primary or fork task');
 		}
 
-		let keys: Hooks.TaskKeys[] = [];
+		let keys: Hooks.TaskKeys[] = [
+			{
+				id: task.id,
+				namespace: task.namespace
+			}
+		];
 
-		keys = await promiseReduce(
-			task.type === 'FORK'
-				? [
-						// query all forks
-						this.db.tasks.query({
-							item: {
-								id: task.id,
-								namespace: `${task.primaryNamespace}#FORK`
-							},
-							limit: Infinity,
-							select: ['id', 'namespace']
-						}),
-						// query all forks' subtasks
-						this.db.tasks.query({
-							item: {
-								id: task.id,
-								namespace: `${task.primaryNamespace}#SUBTASK`
-							},
-							limit: Infinity,
-							prefix: true,
-							select: ['id', 'namespace']
-						})
-					]
-				: [
-						// query all tasks' children
-						this.db.tasks.query({
-							item: {
-								primaryId: task.id,
-								primaryNamespace: task.primaryNamespace
-							},
-							limit: Infinity,
-							select: ['id', 'namespace']
-						})
-					],
-			(reduction, { items }) => {
-				reduction = reduction.concat(
-					_.map(items, item => {
-						return {
-							id: item.id,
-							namespace: item.namespace
-						};
-					})
-				);
-
-				return reduction;
+		const subtasks = await this.db.tasks.query({
+			item: {
+				id: task.id,
+				namespace: `${task.primaryNamespace}#SUBTASK`
 			},
-			keys
-		);
+			limit: Infinity,
+			prefix: true,
+			select: ['id', 'namespace']
+		});
 
-		let promiseTasks: (() => Promise<TransactWriteCommandOutput[]>)[] = [];
-
-		for (const chunk of _.chunk(keys, 100)) {
-			promiseTasks = [
-				...promiseTasks,
-				() => {
-					const transactItems = _.map(chunk, ({ id, namespace }) => {
-						return {
-							Delete: {
-								Key: { id, namespace },
-								TableName: this.db.tasks.table
-							}
-						};
-					});
-
-					return this.db.tasks.transaction({
-						TransactItems: _.compact(transactItems)
-					});
-				}
-			];
+		if (subtasks.count > 0) {
+			keys = keys.concat(subtasks.items);
 		}
 
-		await promiseAllSettled(promiseTasks, this.maxConcurrency);
+		await this.db.tasks.batchDelete(keys);
 
 		return task;
 	}
@@ -780,6 +729,43 @@ class Hooks {
 		queryOptions.queryExpression = '#namespace = :namespace';
 
 		return query(queryOptions);
+	}
+
+	async fetchTasksByPrimaryTask(input: Hooks.FetchTasksByPrimaryTaskInput): Promise<Hooks.FetchTasksResponse> {
+		const args = await schema.fetchTasksByPrimaryTaskInput.parseAsync(input);
+
+		let queryOptions: Dynamodb.QueryOptions<Hooks.Task> = {
+			attributeNames: {
+				'#type': 'type'
+			},
+			attributeValues: {
+				':fork': 'FORK',
+				':primary': 'PRIMARY'
+			},
+			filterExpression: '#type = :primary OR #type = :fork',
+			item:
+				args.primaryNamespace && args.primaryId
+					? {
+							primaryId: args.primaryId,
+							primaryNamespace: args.primaryNamespace
+						}
+					: {
+							primaryNamespace: args.primaryNamespace
+						},
+			limit: args.limit,
+			scanIndexForward: args.desc ? false : true,
+			startKey: args.startKey
+		};
+
+		if (args.chunkLimit) {
+			queryOptions.chunkLimit = args.chunkLimit;
+		}
+
+		if (args.onChunk) {
+			queryOptions.onChunk = args.onChunk;
+		}
+
+		return this.db.tasks.query(queryOptions);
 	}
 
 	private async getSubTaskParent(input: Hooks.Task): Promise<Hooks.Task> {
@@ -1136,7 +1122,11 @@ class Hooks {
 			throw new TaskException(`Task is already ${status}`);
 		}
 
-		if (task.status === 'MAX-ERRORS-REACHED' || task.status === 'PROCESSING') {
+		if (
+			task.status === 'MAX-ERRORS-REACHED' ||
+			task.status === 'PROCESSING' ||
+			(status === 'DISABLED' && task.status === 'MAX-REPEAT-REACHED')
+		) {
 			throw new TaskException('Task is not in a valid state');
 		}
 
@@ -1144,57 +1134,29 @@ class Hooks {
 			throw new TaskException('Task has reached the repeat max');
 		}
 
-		let keys: (Hooks.TaskKeys & { type: Hooks.TaskType })[] = [];
+		let keys: (Hooks.TaskKeys & {
+			type: Hooks.TaskType;
+		})[] = [
+			{
+				id: task.id,
+				namespace: task.namespace,
+				type: task.type
+			}
+		];
 
-		keys = await promiseReduce(
-			task.type === 'FORK'
-				? [
-						// query all forks
-						this.db.tasks.query({
-							item: {
-								id: task.id,
-								namespace: `${task.primaryNamespace}#FORK`
-							},
-							limit: Infinity,
-							select: ['id', 'namespace', 'type']
-						}),
-						// query all forks' subtasks
-						this.db.tasks.query({
-							item: {
-								id: task.id,
-								namespace: `${task.primaryNamespace}#SUBTASK`
-							},
-							limit: Infinity,
-							prefix: true,
-							select: ['id', 'namespace', 'type']
-						})
-					]
-				: [
-						// query all tasks' children
-						this.db.tasks.query({
-							item: {
-								primaryId: task.id,
-								primaryNamespace: task.primaryNamespace
-							},
-							limit: Infinity,
-							select: ['id', 'namespace', 'type']
-						})
-					],
-			(reduction, { items }) => {
-				reduction = reduction.concat(
-					_.map(items, item => {
-						return {
-							id: item.id,
-							namespace: item.namespace,
-							type: item.type
-						};
-					})
-				);
-
-				return reduction;
+		const subtasks = await this.db.tasks.query({
+			item: {
+				id: task.id,
+				namespace: `${task.primaryNamespace}#SUBTASK`
 			},
-			keys
-		);
+			limit: Infinity,
+			prefix: true,
+			select: ['id', 'namespace', 'type']
+		});
+
+		if (subtasks.count > 0) {
+			keys = keys.concat(subtasks.items);
+		}
 
 		let promiseTasks: (() => Promise<TransactWriteCommandOutput[]>)[] = [];
 
@@ -1203,6 +1165,7 @@ class Hooks {
 				...promiseTasks,
 				() => {
 					const transactItems = _.map(chunk, ({ id, namespace, type }) => {
+						// delete subtask if status is disabled
 						if (type === 'SUBTASK') {
 							if (status !== 'DISABLED') {
 								return null;
@@ -1724,42 +1687,7 @@ class Hooks {
 			throw new TaskException('Task must be a primary or fork task');
 		}
 
-		let keys: Dynamodb.MultiResponse<Hooks.TaskKeys> = {
-			count: 0,
-			items: [],
-			lastEvaluatedKey: null
-		};
-
-		if (task.type === 'FORK') {
-			// query all forks
-			keys = await this.db.tasks.query({
-				item: {
-					id: task.id,
-					namespace: `${task.primaryNamespace}#FORK`
-				},
-				limit: Infinity,
-				select: ['id', 'namespace']
-			});
-		} else {
-			// query all tasks' children
-			keys = await this.db.tasks.query({
-				attributeNames: { '#type': 'type' },
-				attributeValues: {
-					':fork': 'FORK',
-					':primary': 'PRIMARY'
-				},
-				filterExpression: '#type = :fork OR #type = :primary',
-				item: {
-					primaryId: task.id,
-					primaryNamespace: task.primaryNamespace
-				},
-				limit: Infinity,
-				select: ['id', 'namespace']
-			});
-		}
-
-		let promiseTasks: (() => Promise<TransactWriteCommandOutput[]>)[] = [];
-		let updateProperties = _.pick(args, [
+		const updateProperties = _.pick(args, [
 			'concurrency',
 			'conditionFilter',
 			'description',
@@ -1783,7 +1711,7 @@ class Hooks {
 			'title'
 		]);
 
-		let updateAttributes = _.reduce(
+		const updateAttributes = _.reduce(
 			updateProperties,
 			(reduction, value, key) => {
 				if (key === 'noAfter' || key === 'noBefore' || key === 'scheduledDate') {
@@ -1803,15 +1731,9 @@ class Hooks {
 				return reduction;
 			},
 			{
-				attributeNames: {
-					'#ts': '__ts',
-					'#updatedAt': '__updatedAt'
-				},
-				attributeValues: {
-					':ts': now,
-					':updatedAt': date.toISOString()
-				},
-				expression: ['#ts = :ts', '#updatedAt = :updatedAt']
+				attributeNames: {},
+				attributeValues: {},
+				expression: []
 			} as {
 				attributeNames: Record<string, string>;
 				attributeValues: Record<string, any>;
@@ -1819,38 +1741,19 @@ class Hooks {
 			}
 		);
 
-		for (const chunk of _.chunk(keys.items, 25)) {
-			promiseTasks = [
-				...promiseTasks,
-				() => {
-					const transactItems = _.map(chunk, ({ id, namespace }) => {
-						return {
-							Update: {
-								ExpressionAttributeNames: updateAttributes.attributeNames,
-								ExpressionAttributeValues: updateAttributes.attributeValues,
-								Key: { id, namespace },
-								TableName: this.db.tasks.table,
-								UpdateExpression: `SET ${updateAttributes.expression.join(', ')}`
-							}
-						};
-					});
-
-					return this.db.tasks.transaction({
-						TransactItems: _.compact(transactItems)
-					});
+		const res = await this.db.tasks.update({
+			attributeNames: updateAttributes.attributeNames,
+			attributeValues: updateAttributes.attributeValues,
+			filter: {
+				item: {
+					id: task.id,
+					namespace: task.namespace
 				}
-			];
-		}
-
-		await promiseAllSettled(promiseTasks, this.maxConcurrency);
-
-		return (await this.getTaskInternal(
-			{
-				id: task.id,
-				namespace: task.namespace
 			},
-			true
-		))!;
+			updateExpression: `SET ${updateAttributes.expression.join(', ')}`
+		});
+
+		return taskShape(res);
 	}
 
 	private uuid(): string {

@@ -2304,8 +2304,8 @@ describe('/index.ts', () => {
 		beforeEach(async () => {
 			task = await hooks.registerTask(createTestTask());
 
+			vi.spyOn(hooks.db.tasks, 'batchDelete');
 			vi.spyOn(hooks.db.tasks, 'query');
-			vi.spyOn(hooks.db.tasks, 'transaction');
 		});
 
 		afterEach(async () => {
@@ -2328,14 +2328,8 @@ describe('/index.ts', () => {
 
 		it('should delete', async () => {
 			// @ts-expect-error
-			const forkTask1 = await hooks.registerForkTask({
-				forkId: 'fork-id-1',
-				primaryTask: task
-			});
-
-			// @ts-expect-error
-			const forkTask2 = await hooks.registerForkTask({
-				forkId: 'fork-id-2',
+			const forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
 				primaryTask: task
 			});
 
@@ -2345,333 +2339,12 @@ describe('/index.ts', () => {
 				// @ts-expect-error
 				hooks.registerDelayedSubTask(createTestSubTaskInput(task, { eventDelayDebounce: true })),
 				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1)),
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask)),
 				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2, { eventDelayDebounce: true }))
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask, { eventDelayDebounce: true }))
 			]);
-			vi.mocked(hooks.db.tasks.query).mockClear();
 
 			let retrieved = await hooks.db.tasks.scan({
-				attributeNames: {
-					'#primaryNamespace': 'primaryNamespace',
-					'#primaryId': 'primaryId'
-				},
-				attributeValues: {
-					':primaryId': task.id,
-					':primaryNamespace': 'spec'
-				},
-				filterExpression: 'begins_with(#primaryNamespace, :primaryNamespace) AND #primaryId = :primaryId',
-				select: ['id', 'namespace']
-			});
-
-			expect(retrieved).toEqual({
-				count: 9,
-				items: expect.arrayContaining([
-					{
-						id: task.id,
-						namespace: 'spec'
-					},
-					{
-						id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: `${task.id}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-1'),
-						namespace: 'spec#FORK'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-2'),
-						namespace: 'spec#FORK'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK'
-					}
-				]),
-				lastEvaluatedKey: null
-			});
-
-			await hooks.deleteTask({
-				id: task.id,
-				namespace: 'spec'
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledOnce();
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				item: {
-					primaryId: task.id,
-					primaryNamespace: 'spec'
-				},
-				limit: Infinity,
-				select: ['id', 'namespace']
-			});
-
-			expect(hooks.db.tasks.transaction).toHaveBeenCalledWith({
-				TransactItems: expect.arrayContaining([
-					{
-						Delete: {
-							Key: { id: task.id, namespace: 'spec' },
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: `${task.id}#DELAY-DEBOUNCE`,
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: await hooks.uuidFromString('fork-id-1'),
-								namespace: 'spec#FORK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: await hooks.uuidFromString('fork-id-2'),
-								namespace: 'spec#FORK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					}
-				])
-			});
-
-			retrieved = await hooks.db.tasks.scan({
-				attributeNames: {
-					'#primaryNamespace': 'primaryNamespace',
-					'#primaryId': 'primaryId'
-				},
-				attributeValues: {
-					':primaryId': task.id,
-					':primaryNamespace': 'spec'
-				},
-				filterExpression: 'begins_with(#primaryNamespace, :primaryNamespace) AND #primaryId = :primaryId',
-				select: ['id', 'namespace']
-			});
-
-			expect(retrieved).toEqual({
-				count: 0,
-				items: [],
-				lastEvaluatedKey: null
-			});
-		});
-
-		it('should delete by fork', async () => {
-			// @ts-expect-error
-			const forkTask1 = await hooks.registerForkTask({
-				forkId: 'fork-id-1',
-				primaryTask: task
-			});
-
-			// @ts-expect-error
-			const forkTask2 = await hooks.registerForkTask({
-				forkId: 'fork-id-2',
-				primaryTask: task
-			});
-
-			await Promise.all([
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(task)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(task, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2, { eventDelayDebounce: true }))
-			]);
-			vi.mocked(hooks.db.tasks.query).mockClear();
-
-			let retrieved = await hooks.db.tasks.scan({
-				attributeNames: {
-					'#primaryNamespace': 'primaryNamespace',
-					'#primaryId': 'primaryId'
-				},
-				attributeValues: {
-					':primaryId': task.id,
-					':primaryNamespace': 'spec'
-				},
-				filterExpression: 'begins_with(#primaryNamespace, :primaryNamespace) AND #primaryId = :primaryId',
-				select: ['id', 'namespace']
-			});
-
-			expect(retrieved).toEqual({
-				count: 9,
-				items: expect.arrayContaining([
-					{
-						id: task.id,
-						namespace: 'spec'
-					},
-					{
-						id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: `${task.id}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-1'),
-						namespace: 'spec#FORK'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-2'),
-						namespace: 'spec#FORK'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK'
-					}
-				]),
-				lastEvaluatedKey: null
-			});
-
-			await hooks.deleteTask({
-				fork: true,
-				id: 'fork-id-1',
-				namespace: 'spec'
-			});
-
-			expect(hooks.db.tasks.query).toHaveBeenCalledTimes(2);
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				item: {
-					id: await hooks.uuidFromString('fork-id-1'),
-					namespace: 'spec#FORK'
-				},
-				limit: Infinity,
-				select: ['id', 'namespace']
-			});
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				item: {
-					id: await hooks.uuidFromString('fork-id-1'),
-					namespace: 'spec#SUBTASK'
-				},
-				limit: Infinity,
-				prefix: true,
-				select: ['id', 'namespace']
-			});
-
-			expect(hooks.db.tasks.transaction).toHaveBeenCalledWith({
-				TransactItems: expect.arrayContaining([
-					{
-						Delete: {
-							Key: {
-								id: await hooks.uuidFromString('fork-id-1'),
-								namespace: 'spec#FORK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					}
-				])
-			});
-
-			retrieved = await hooks.db.tasks.scan({
 				attributeNames: {
 					'#primaryNamespace': 'primaryNamespace',
 					'#primaryId': 'primaryId'
@@ -2700,15 +2373,185 @@ describe('/index.ts', () => {
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id-2'),
+						id: await hooks.uuidFromString('fork-id'),
 						namespace: 'spec#FORK'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						namespace: 'spec#SUBTASK'
+					}
+				]),
+				lastEvaluatedKey: null
+			});
+
+			await hooks.deleteTask({
+				id: task.id,
+				namespace: 'spec'
+			});
+
+			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+				item: {
+					id: task.id,
+					namespace: 'spec#SUBTASK'
+				},
+				limit: Infinity,
+				prefix: true,
+				select: ['id', 'namespace']
+			});
+
+			expect(hooks.db.tasks.batchDelete).toHaveBeenCalledWith([
+				{ id: task.id, namespace: 'spec' },
+				{ id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`), namespace: 'spec#SUBTASK' },
+				{ id: `${task.id}#DELAY-DEBOUNCE`, namespace: 'spec#SUBTASK' }
+			]);
+
+			retrieved = await hooks.db.tasks.scan({
+				attributeNames: {
+					'#primaryNamespace': 'primaryNamespace',
+					'#primaryId': 'primaryId'
+				},
+				attributeValues: {
+					':primaryId': task.id,
+					':primaryNamespace': 'spec'
+				},
+				filterExpression: 'begins_with(#primaryNamespace, :primaryNamespace) AND #primaryId = :primaryId',
+				select: ['id', 'namespace']
+			});
+
+			expect(retrieved).toEqual({
+				count: 3,
+				items: expect.arrayContaining([
+					{
+						id: await hooks.uuidFromString('fork-id'),
+						namespace: 'spec#FORK'
+					},
+					{
+						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						namespace: 'spec#SUBTASK'
+					},
+					{
+						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						namespace: 'spec#SUBTASK'
+					}
+				]),
+				lastEvaluatedKey: null
+			});
+		});
+
+		it('should delete by fork', async () => {
+			// @ts-expect-error
+			const forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
+				primaryTask: task
+			});
+
+			await Promise.all([
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(task)),
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(task, { eventDelayDebounce: true })),
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask)),
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask, { eventDelayDebounce: true }))
+			]);
+
+			let retrieved = await hooks.db.tasks.scan({
+				attributeNames: {
+					'#primaryNamespace': 'primaryNamespace',
+					'#primaryId': 'primaryId'
+				},
+				attributeValues: {
+					':primaryId': task.id,
+					':primaryNamespace': 'spec'
+				},
+				filterExpression: 'begins_with(#primaryNamespace, :primaryNamespace) AND #primaryId = :primaryId',
+				select: ['id', 'namespace']
+			});
+
+			expect(retrieved).toEqual({
+				count: 6,
+				items: expect.arrayContaining([
+					{
+						id: task.id,
+						namespace: 'spec'
+					},
+					{
+						id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
+						namespace: 'spec#SUBTASK'
+					},
+					{
+						id: `${task.id}#DELAY-DEBOUNCE`,
+						namespace: 'spec#SUBTASK'
+					},
+					{
+						id: await hooks.uuidFromString('fork-id'),
+						namespace: 'spec#FORK'
+					},
+					{
+						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						namespace: 'spec#SUBTASK'
+					},
+					{
+						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						namespace: 'spec#SUBTASK'
+					}
+				]),
+				lastEvaluatedKey: null
+			});
+
+			await hooks.deleteTask({
+				fork: true,
+				id: 'fork-id',
+				namespace: 'spec'
+			});
+
+			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+				item: {
+					id: await hooks.uuidFromString('fork-id'),
+					namespace: 'spec#SUBTASK'
+				},
+				limit: Infinity,
+				prefix: true,
+				select: ['id', 'namespace']
+			});
+
+			expect(hooks.db.tasks.batchDelete).toHaveBeenCalledWith([
+				{ id: await hooks.uuidFromString('fork-id'), namespace: 'spec#FORK' },
+				{ id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`), namespace: 'spec#SUBTASK' },
+				{ id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`, namespace: 'spec#SUBTASK' }
+			]);
+
+			retrieved = await hooks.db.tasks.scan({
+				attributeNames: {
+					'#primaryNamespace': 'primaryNamespace',
+					'#primaryId': 'primaryId'
+				},
+				attributeValues: {
+					':primaryId': task.id,
+					':primaryNamespace': 'spec'
+				},
+				filterExpression: 'begins_with(#primaryNamespace, :primaryNamespace) AND #primaryId = :primaryId',
+				select: ['id', 'namespace']
+			});
+
+			expect(retrieved).toEqual({
+				count: 3,
+				items: expect.arrayContaining([
+					{
+						id: task.id,
+						namespace: 'spec'
+					},
+					{
+						id: expect.stringMatching(`${task.id}#DELAY#[0-9]+`),
+						namespace: 'spec#SUBTASK'
+					},
+					{
+						id: `${task.id}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK'
 					}
 				]),
@@ -2944,10 +2787,11 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should fetch by [namespace, desc, chunkLimit, onChunk, status]', async () => {
+		it('should fetch by [namespace, desc, chunkLimit, limit, onChunk, status]', async () => {
 			const res = await hooks.fetchTasks({
 				chunkLimit: 1,
 				desc: true,
+				limit: 10,
 				namespace: 'spec',
 				onChunk: async () => {},
 				status: 'ACTIVE'
@@ -2964,7 +2808,7 @@ describe('/index.ts', () => {
 				},
 				chunkLimit: 1,
 				filterExpression: '#status = :status',
-				limit: 100,
+				limit: 10,
 				onChunk: expect.any(Function),
 				queryExpression: '#namespace = :namespace',
 				scanIndexForward: false,
@@ -3287,6 +3131,161 @@ describe('/index.ts', () => {
 					items: [],
 					lastEvaluatedKey: null
 				});
+			});
+		});
+	});
+
+	describe('fetchTasksByPrimaryTask', () => {
+		let tasks: Hooks.Task[];
+		let forkTask: Hooks.Task;
+
+		const pick = (tasks: Partial<Hooks.Task>[]) => {
+			return _.map(tasks, task => {
+				return _.pick(task, ['id', 'namespace', 'primaryId', 'primaryNamespace', 'type']);
+			});
+		};
+
+		beforeAll(async () => {
+			tasks = await Promise.all([
+				hooks.registerTask(
+					createTestTask(0, {
+						eventPattern: 'event-pattern-1'
+					})
+				),
+				hooks.registerTask(
+					createTestTask(1000, {
+						eventPattern: 'event-pattern-2'
+					})
+				),
+				hooks.registerTask(
+					createTestTask(2000, {
+						eventPattern: 'event-pattern-3'
+					})
+				)
+			]);
+
+			// @ts-expect-error
+			forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
+				primaryTask: tasks[0]
+			});
+
+			await Promise.all([
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(tasks[0])),
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(tasks[0], { eventDelayDebounce: true })),
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask)),
+				// @ts-expect-error
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask, { eventDelayDebounce: true }))
+			]);
+		});
+
+		beforeEach(() => {
+			vi.spyOn(hooks.db.tasks, 'query');
+		});
+
+		afterAll(async () => {
+			await hooks.clearTasks('spec');
+		});
+
+		it('should fetch by [primaryNamespace]', async () => {
+			const res = await hooks.fetchTasksByPrimaryTask({
+				primaryNamespace: 'spec'
+			});
+
+			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#type': 'type'
+				},
+				attributeValues: {
+					':fork': 'FORK',
+					':primary': 'PRIMARY'
+				},
+				filterExpression: '#type = :primary OR #type = :fork',
+				item: {
+					primaryNamespace: 'spec'
+				},
+				limit: 100,
+				scanIndexForward: true,
+				startKey: null
+			});
+
+			expect(res).toEqual({
+				count: 4,
+				items: expect.arrayContaining([...pick(tasks), ...pick([forkTask])]),
+				lastEvaluatedKey: null
+			});
+		});
+
+		it('should fetch by [namespace, desc, chunkLimit, limit, onChunk]', async () => {
+			const res = await hooks.fetchTasksByPrimaryTask({
+				chunkLimit: 1,
+				desc: true,
+				limit: 10,
+				primaryNamespace: 'spec',
+				onChunk: async () => {}
+			});
+
+			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#type': 'type'
+				},
+				attributeValues: {
+					':fork': 'FORK',
+					':primary': 'PRIMARY'
+				},
+				chunkLimit: 1,
+				filterExpression: '#type = :primary OR #type = :fork',
+				item: {
+					primaryNamespace: 'spec'
+				},
+				limit: 10,
+				onChunk: expect.any(Function),
+				scanIndexForward: false,
+				startKey: null
+			});
+
+			expect(res).toEqual({
+				count: 4,
+				items: expect.arrayContaining([...pick(tasks), ...pick([forkTask])]),
+				lastEvaluatedKey: null
+			});
+		});
+
+		it('should fetch by [namespace, id]', async () => {
+			const res = await hooks.fetchTasksByPrimaryTask({
+				primaryId: tasks[0].id,
+				primaryNamespace: 'spec'
+			});
+
+			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#type': 'type'
+				},
+				attributeValues: {
+					':fork': 'FORK',
+					':primary': 'PRIMARY'
+				},
+				filterExpression: '#type = :primary OR #type = :fork',
+				item: {
+					primaryId: tasks[0].id,
+					primaryNamespace: 'spec'
+				},
+				limit: 100,
+				scanIndexForward: true,
+				startKey: null
+			});
+
+			expect(res).toEqual({
+				count: 2,
+				items: expect.arrayContaining(
+					[...pick(tasks), ...pick([forkTask])].filter(task => {
+						return task.primaryId === tasks[0].id;
+					})
+				),
+				lastEvaluatedKey: null
 			});
 		});
 	});
@@ -5348,14 +5347,8 @@ describe('/index.ts', () => {
 
 		it('should disable', async () => {
 			// @ts-expect-error
-			const forkTask1 = await hooks.registerForkTask({
-				forkId: 'fork-id-1',
-				primaryTask: task
-			});
-
-			// @ts-expect-error
-			const forkTask2 = await hooks.registerForkTask({
-				forkId: 'fork-id-2',
+			const forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
 				primaryTask: task
 			});
 
@@ -5371,27 +5364,16 @@ describe('/index.ts', () => {
 					})
 				),
 				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1)),
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask)),
 				// @ts-expect-error
 				hooks.registerDelayedSubTask(
-					createTestSubTaskInput(forkTask1, {
-						eventDelayDebounce: true,
-						eventDelayUnit: 'minutes',
-						eventDelayValue: 1
-					})
-				),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(
-					createTestSubTaskInput(forkTask2, {
+					createTestSubTaskInput(forkTask, {
 						eventDelayDebounce: true,
 						eventDelayUnit: 'minutes',
 						eventDelayValue: 1
 					})
 				)
 			]);
-			vi.mocked(hooks.db.tasks.query).mockClear();
 
 			let retrieved = await hooks.db.tasks.scan({
 				attributeNames: {
@@ -5407,7 +5389,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(retrieved).toEqual({
-				count: 9,
+				count: 6,
 				items: expect.arrayContaining([
 					{
 						id: task.id,
@@ -5425,32 +5407,17 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id-1'),
+						id: await hooks.uuidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK',
-						status: 'ACTIVE'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-2'),
-						namespace: 'spec#FORK',
-						status: 'ACTIVE'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK',
-						status: 'ACTIVE'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					}
@@ -5464,13 +5431,13 @@ describe('/index.ts', () => {
 				namespace: 'spec'
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledOnce();
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
 				item: {
-					primaryId: task.id,
-					primaryNamespace: 'spec'
+					id: task.id,
+					namespace: 'spec#SUBTASK'
 				},
 				limit: Infinity,
+				prefix: true,
 				select: ['id', 'namespace', 'type']
 			});
 
@@ -5510,82 +5477,6 @@ describe('/index.ts', () => {
 							},
 							TableName: hooks.db.tasks.table
 						}
-					},
-					{
-						Update: {
-							ExpressionAttributeNames: {
-								'#status': 'status',
-								'#ts': '__ts',
-								'#updatedAt': '__updatedAt'
-							},
-							ExpressionAttributeValues: {
-								':status': 'DISABLED',
-								':ts': expect.any(Number),
-								':updatedAt': expect.any(String)
-							},
-							Key: {
-								id: await hooks.uuidFromString('fork-id-1'),
-								namespace: 'spec#FORK'
-							},
-							TableName: hooks.db.tasks.table,
-							UpdateExpression: 'SET #status = :status, #ts = :ts, #updatedAt = :updatedAt'
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Update: {
-							ExpressionAttributeNames: {
-								'#status': 'status',
-								'#ts': '__ts',
-								'#updatedAt': '__updatedAt'
-							},
-							ExpressionAttributeValues: {
-								':status': 'DISABLED',
-								':ts': expect.any(Number),
-								':updatedAt': expect.any(String)
-							},
-							Key: {
-								id: await hooks.uuidFromString('fork-id-2'),
-								namespace: 'spec#FORK'
-							},
-							TableName: hooks.db.tasks.table,
-							UpdateExpression: 'SET #status = :status, #ts = :ts, #updatedAt = :updatedAt'
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
-					},
-					{
-						Delete: {
-							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-								namespace: 'spec#SUBTASK'
-							},
-							TableName: hooks.db.tasks.table
-						}
 					}
 				])
 			});
@@ -5604,7 +5495,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(retrieved).toEqual({
-				count: 3,
+				count: 4,
 				items: expect.arrayContaining([
 					{
 						id: task.id,
@@ -5612,14 +5503,19 @@ describe('/index.ts', () => {
 						status: 'DISABLED'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id-1'),
+						id: await hooks.uuidFromString('fork-id'),
 						namespace: 'spec#FORK',
-						status: 'DISABLED'
+						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id-2'),
-						namespace: 'spec#FORK',
-						status: 'DISABLED'
+						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						namespace: 'spec#SUBTASK',
+						status: 'ACTIVE'
+					},
+					{
+						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						namespace: 'spec#SUBTASK',
+						status: 'ACTIVE'
 					}
 				]),
 				lastEvaluatedKey: null
@@ -5631,14 +5527,8 @@ describe('/index.ts', () => {
 
 		it('should disable by fork', async () => {
 			// @ts-expect-error
-			const forkTask1 = await hooks.registerForkTask({
-				forkId: 'fork-id-1',
-				primaryTask: task
-			});
-
-			// @ts-expect-error
-			const forkTask2 = await hooks.registerForkTask({
-				forkId: 'fork-id-2',
+			const forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
 				primaryTask: task
 			});
 
@@ -5654,27 +5544,16 @@ describe('/index.ts', () => {
 					})
 				),
 				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1)),
+				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask)),
 				// @ts-expect-error
 				hooks.registerDelayedSubTask(
-					createTestSubTaskInput(forkTask1, {
-						eventDelayDebounce: true,
-						eventDelayUnit: 'minutes',
-						eventDelayValue: 1
-					})
-				),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(
-					createTestSubTaskInput(forkTask2, {
+					createTestSubTaskInput(forkTask, {
 						eventDelayDebounce: true,
 						eventDelayUnit: 'minutes',
 						eventDelayValue: 1
 					})
 				)
 			]);
-			vi.mocked(hooks.db.tasks.query).mockClear();
 
 			let retrieved = await hooks.db.tasks.scan({
 				attributeNames: {
@@ -5690,7 +5569,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(retrieved).toEqual({
-				count: 9,
+				count: 6,
 				items: expect.arrayContaining([
 					{
 						id: task.id,
@@ -5708,32 +5587,17 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id-1'),
+						id: await hooks.uuidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK',
-						status: 'ACTIVE'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-2'),
-						namespace: 'spec#FORK',
-						status: 'ACTIVE'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK',
-						status: 'ACTIVE'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					}
@@ -5744,22 +5608,13 @@ describe('/index.ts', () => {
 			const res = await hooks.setTaskActive({
 				active: false,
 				fork: true,
-				id: 'fork-id-1',
+				id: 'fork-id',
 				namespace: 'spec'
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledTimes(2);
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
 				item: {
-					id: await hooks.uuidFromString('fork-id-1'),
-					namespace: 'spec#FORK'
-				},
-				limit: Infinity,
-				select: ['id', 'namespace', 'type']
-			});
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				item: {
-					id: await hooks.uuidFromString('fork-id-1'),
+					id: await hooks.uuidFromString('fork-id'),
 					namespace: 'spec#SUBTASK'
 				},
 				limit: Infinity,
@@ -5782,7 +5637,7 @@ describe('/index.ts', () => {
 								':updatedAt': expect.any(String)
 							},
 							Key: {
-								id: await hooks.uuidFromString('fork-id-1'),
+								id: await hooks.uuidFromString('fork-id'),
 								namespace: 'spec#FORK'
 							},
 							TableName: hooks.db.tasks.table,
@@ -5792,7 +5647,7 @@ describe('/index.ts', () => {
 					{
 						Delete: {
 							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-1')}#DELAY#[0-9]+`),
+								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
 								namespace: 'spec#SUBTASK'
 							},
 							TableName: hooks.db.tasks.table
@@ -5801,7 +5656,7 @@ describe('/index.ts', () => {
 					{
 						Delete: {
 							Key: {
-								id: `${await hooks.uuidFromString('fork-id-1')}#DELAY-DEBOUNCE`,
+								id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
 								namespace: 'spec#SUBTASK'
 							},
 							TableName: hooks.db.tasks.table
@@ -5824,7 +5679,7 @@ describe('/index.ts', () => {
 			});
 
 			expect(retrieved).toEqual({
-				count: 7,
+				count: 4,
 				items: expect.arrayContaining([
 					{
 						id: task.id,
@@ -5842,24 +5697,9 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id-1'),
+						id: await hooks.uuidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'DISABLED'
-					},
-					{
-						id: await hooks.uuidFromString('fork-id-2'),
-						namespace: 'spec#FORK',
-						status: 'ACTIVE'
-					},
-					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id-2')}#DELAY#[0-9]+`),
-						namespace: 'spec#SUBTASK',
-						status: 'ACTIVE'
-					},
-					{
-						id: `${await hooks.uuidFromString('fork-id-2')}#DELAY-DEBOUNCE`,
-						namespace: 'spec#SUBTASK',
-						status: 'ACTIVE'
 					}
 				]),
 				lastEvaluatedKey: null
@@ -5917,10 +5757,10 @@ describe('/index.ts', () => {
 			}
 		});
 
-		it('should throw if task is processing', async () => {
+		it.each([['PROCESSING'], ['MAX-ERRORS-REACHED'], ['MAX-REPEAT-REACHED']])('should throw if task is %s', async status => {
 			await hooks.db.tasks.update({
 				attributeNames: { '#status': 'status' },
-				attributeValues: { ':status': 'PROCESSING' },
+				attributeValues: { ':status': status },
 				filter: {
 					item: { id: task.id, namespace: 'spec' }
 				},
@@ -7439,7 +7279,7 @@ describe('/index.ts', () => {
 						_.map(tasks.slice(0, 2), task => {
 							return {
 								id: task.id,
-								namespace: task.namespace
+								namespace: 'spec'
 							};
 						})
 					),
@@ -7482,7 +7322,7 @@ describe('/index.ts', () => {
 						_.map(tasks.slice(0, 2), task => {
 							return {
 								id: task.id,
-								namespace: task.namespace
+								namespace: 'spec'
 							};
 						})
 					),
@@ -7608,7 +7448,7 @@ describe('/index.ts', () => {
 						_.map(tasks.slice(0, 2), task => {
 							return {
 								id: task.id,
-								namespace: task.namespace
+								namespace: 'spec'
 							};
 						})
 					),
@@ -7693,13 +7533,8 @@ describe('/index.ts', () => {
 	});
 
 	describe('updateTask', () => {
-		let task: Hooks.Task;
-
 		beforeEach(async () => {
-			task = await hooks.registerTask(createTestTask());
-
-			vi.spyOn(hooks.db.tasks, 'query');
-			vi.spyOn(hooks.db.tasks, 'transaction');
+			vi.spyOn(hooks.db.tasks, 'update');
 		});
 
 		afterEach(async () => {
@@ -7716,7 +7551,7 @@ describe('/index.ts', () => {
 
 				throw new Error('Expected to throw');
 			} catch (err) {
-				expect(hooks.db.tasks.transaction).not.toHaveBeenCalled();
+				expect(hooks.db.tasks.update).not.toHaveBeenCalled();
 				expect(err).toBeInstanceOf(Error);
 			}
 		});
@@ -7726,7 +7561,7 @@ describe('/index.ts', () => {
 				const currentYear = new Date().getFullYear();
 
 				await hooks.updateTask({
-					id: task.id,
+					id: 'id',
 					namespace: 'spec',
 					noAfter: `${currentYear}-01-01T00:00:00Z`,
 					noBefore: `${currentYear + 1}-01-01T00:00:00-03:00`,
@@ -7735,7 +7570,7 @@ describe('/index.ts', () => {
 
 				throw new Error('Expected to throw');
 			} catch (err) {
-				expect(hooks.db.tasks.transaction).not.toHaveBeenCalled();
+				expect(hooks.db.tasks.update).not.toHaveBeenCalled();
 				expect((err as z.ZodError).errors[0].message).toEqual('noAfter cannot be in the past');
 			}
 		});
@@ -7745,7 +7580,7 @@ describe('/index.ts', () => {
 				const currentYear = new Date().getFullYear();
 
 				await hooks.updateTask({
-					id: task.id,
+					id: 'id',
 					namespace: 'spec',
 					noAfter: `${currentYear + 1}-01-01T00:00:00Z`, // 2026-01-01T00:00:00.000Z
 					noBefore: `${currentYear}-01-01T00:00:00-03:00`, // 2025-01-01T03:00:00.000Z
@@ -7754,7 +7589,7 @@ describe('/index.ts', () => {
 
 				throw new Error('Expected to throw');
 			} catch (err) {
-				expect(hooks.db.tasks.transaction).not.toHaveBeenCalled();
+				expect(hooks.db.tasks.update).not.toHaveBeenCalled();
 				expect((err as z.ZodError).errors[0].message).toEqual('noBefore cannot be in the past');
 			}
 		});
@@ -7764,7 +7599,7 @@ describe('/index.ts', () => {
 				const currentYear = new Date().getFullYear();
 
 				await hooks.updateTask({
-					id: task.id,
+					id: 'id',
 					namespace: 'spec',
 					noAfter: `${currentYear + 1}-01-01T00:00:00Z`, // 2026-01-01T00:00:00.000Z
 					noBefore: `${currentYear + 1}-01-01T00:00:00-03:00`, // 2026-01-01T03:00:00.000Z
@@ -7773,7 +7608,7 @@ describe('/index.ts', () => {
 
 				throw new Error('Expected to throw');
 			} catch (err) {
-				expect(hooks.db.tasks.transaction).not.toHaveBeenCalled();
+				expect(hooks.db.tasks.update).not.toHaveBeenCalled();
 				expect((err as z.ZodError).errors[0].message).toEqual('noAfter must be after noBefore');
 			}
 		});
@@ -7783,7 +7618,7 @@ describe('/index.ts', () => {
 				const currentYear = new Date().getFullYear();
 
 				await hooks.updateTask({
-					id: task.id,
+					id: 'id',
 					namespace: 'spec',
 					scheduledDate: `${currentYear}-01-01T00:00:00-03:00`,
 					requestUrl: 'https://httpbin.org/anything'
@@ -7791,41 +7626,14 @@ describe('/index.ts', () => {
 
 				throw new Error('Expected to throw');
 			} catch (err) {
-				expect(hooks.db.tasks.transaction).not.toHaveBeenCalled();
+				expect(hooks.db.tasks.update).not.toHaveBeenCalled();
 				expect((err as z.ZodError).errors[0].message).toEqual('scheduledDate cannot be in the past');
 			}
 		});
 
 		it('should update', async () => {
 			const currentYear = new Date().getFullYear();
-
-			// @ts-expect-error
-			const forkTask1 = await hooks.registerForkTask({
-				forkId: 'fork-id-1',
-				primaryTask: task
-			});
-
-			// @ts-expect-error
-			const forkTask2 = await hooks.registerForkTask({
-				forkId: 'fork-id-2',
-				primaryTask: task
-			});
-
-			await Promise.all([
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(task)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(task, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2, { eventDelayDebounce: true }))
-			]);
-			vi.mocked(hooks.db.tasks.query).mockClear();
+			const task = await hooks.registerTask(createTestTask());
 
 			const res = await hooks.updateTask({
 				concurrency: !task.concurrency,
@@ -7841,7 +7649,7 @@ describe('/index.ts', () => {
 				eventDelayValue: task.eventDelayValue + 1,
 				eventPattern: 'event-pattern-',
 				id: task.id,
-				namespace: task.namespace,
+				namespace: 'spec',
 				noAfter: `${currentYear + 1}-01-01T00:00:00-03:00`,
 				noBefore: `${currentYear + 1}-01-01T00:00:00.000Z`,
 				repeatInterval: task.repeatInterval + 1,
@@ -7858,165 +7666,110 @@ describe('/index.ts', () => {
 				title: 'updated'
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledOnce();
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				attributeNames: { '#type': 'type' },
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#concurrency': 'concurrency',
+					'#conditionFilter': 'conditionFilter',
+					'#description': 'description',
+					'#eventDelayDebounce': 'eventDelayDebounce',
+					'#eventDelayUnit': 'eventDelayUnit',
+					'#eventDelayValue': 'eventDelayValue',
+					'#eventPattern': 'eventPattern',
+					'#noAfter': 'noAfter',
+					'#namespace__eventPattern': 'namespace__eventPattern',
+					'#noBefore': 'noBefore',
+					'#repeatInterval': 'repeatInterval',
+					'#repeatMax': 'repeatMax',
+					'#repeatUnit': 'repeatUnit',
+					'#requestBody': 'requestBody',
+					'#requestHeaders': 'requestHeaders',
+					'#requestMethod': 'requestMethod',
+					'#requestUrl': 'requestUrl',
+					'#rescheduleOnEvent': 'rescheduleOnEvent',
+					'#retryLimit': 'retryLimit',
+					'#ruleId': 'ruleId',
+					'#scheduledDate': 'scheduledDate',
+					'#title': 'title'
+				},
 				attributeValues: {
-					':fork': 'FORK',
-					':primary': 'PRIMARY'
+					':concurrency': true,
+					':conditionFilter': {
+						alias: '',
+						criteriaMapper: null,
+						defaultValue: '',
+						matchInArray: true,
+						matchValue: 'value',
+						normalize: true,
+						operator: 'EQUALS',
+						type: 'STRING',
+						valuePath: ['key'],
+						valueMapper: null
+					},
+					':description': 'updated',
+					':eventDelayDebounce': true,
+					':eventDelayUnit': 'hours',
+					':eventDelayValue': 1,
+					':eventPattern': 'event-pattern-',
+					':noAfter': `${currentYear + 1}-01-01T03:00:00.000Z`,
+					':noBefore': `${currentYear + 1}-01-01T00:00:00.000Z`,
+					':namespace__eventPattern': 'spec#event-pattern-',
+					':repeatInterval': 31,
+					':repeatMax': 1,
+					':repeatUnit': 'hours',
+					':requestBody': { a: 1, b: 2 },
+					':requestHeaders': { a: '1', b: '2' },
+					':requestMethod': 'POST',
+					':requestUrl': 'https://httpbin.org/anything-2',
+					':rescheduleOnEvent': false,
+					':retryLimit': 4,
+					':ruleId': 'rule-id',
+					':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
+					':title': 'updated'
 				},
-				filterExpression: '#type = :fork OR #type = :primary',
-				item: {
-					primaryId: task.id,
-					primaryNamespace: 'spec'
+				filter: {
+					item: {
+						id: task.id,
+						namespace: 'spec'
+					}
 				},
-				limit: Infinity,
-				select: ['id', 'namespace']
+				updateExpression: `SET ${[
+					'#concurrency = :concurrency',
+					'#conditionFilter = :conditionFilter',
+					'#description = :description',
+					'#eventDelayDebounce = :eventDelayDebounce',
+					'#eventDelayUnit = :eventDelayUnit',
+					'#eventDelayValue = :eventDelayValue',
+					'#eventPattern = :eventPattern',
+					'#namespace__eventPattern = :namespace__eventPattern',
+					'#noAfter = :noAfter',
+					'#noBefore = :noBefore',
+					'#repeatInterval = :repeatInterval',
+					'#repeatMax = :repeatMax',
+					'#repeatUnit = :repeatUnit',
+					'#requestBody = :requestBody',
+					'#requestHeaders = :requestHeaders',
+					'#requestMethod = :requestMethod',
+					'#requestUrl = :requestUrl',
+					'#rescheduleOnEvent = :rescheduleOnEvent',
+					'#retryLimit = :retryLimit',
+					'#ruleId = :ruleId',
+					'#scheduledDate = :scheduledDate',
+					'#title = :title'
+				].join(', ')}`
 			});
-
-			const transactItems = vi.mocked(hooks.db.tasks.transaction).mock.calls[0][0].TransactItems;
-
-			expect(hooks.db.tasks.transaction).toHaveBeenCalledWith({
-				TransactItems: expect.any(Array)
-			});
-
-			expect(transactItems).toHaveLength(3);
-			expect(
-				_.every(transactItems, item => {
-					return _.includes(item.Update!.Key!.namespace, 'FORK');
-				})
-			).toBe(false);
-
-			expect(
-				_.every(transactItems, item => {
-					return (
-						_.isEqual(item.Update!.ExpressionAttributeNames, {
-							'#concurrency': 'concurrency',
-							'#conditionFilter': 'conditionFilter',
-							'#description': 'description',
-							'#eventDelayDebounce': 'eventDelayDebounce',
-							'#eventDelayUnit': 'eventDelayUnit',
-							'#eventDelayValue': 'eventDelayValue',
-							'#eventPattern': 'eventPattern',
-							'#noAfter': 'noAfter',
-							'#namespace__eventPattern': 'namespace__eventPattern',
-							'#noBefore': 'noBefore',
-							'#repeatInterval': 'repeatInterval',
-							'#repeatMax': 'repeatMax',
-							'#repeatUnit': 'repeatUnit',
-							'#requestBody': 'requestBody',
-							'#requestHeaders': 'requestHeaders',
-							'#requestMethod': 'requestMethod',
-							'#requestUrl': 'requestUrl',
-							'#rescheduleOnEvent': 'rescheduleOnEvent',
-							'#retryLimit': 'retryLimit',
-							'#ruleId': 'ruleId',
-							'#scheduledDate': 'scheduledDate',
-							'#ts': '__ts',
-							'#title': 'title',
-							'#updatedAt': '__updatedAt'
-						}) &&
-						_.isEqual(item.Update!.ExpressionAttributeValues, {
-							':concurrency': true,
-							':conditionFilter': {
-								alias: '',
-								criteriaMapper: null,
-								defaultValue: '',
-								matchInArray: true,
-								matchValue: 'value',
-								normalize: true,
-								operator: 'EQUALS',
-								type: 'STRING',
-								valuePath: ['key'],
-								valueMapper: null
-							},
-							':description': 'updated',
-							':eventDelayDebounce': true,
-							':eventDelayUnit': 'hours',
-							':eventDelayValue': 1,
-							':eventPattern': 'event-pattern-',
-							':noAfter': `${currentYear + 1}-01-01T03:00:00.000Z`,
-							':noBefore': `${currentYear + 1}-01-01T00:00:00.000Z`,
-							':namespace__eventPattern': 'spec#event-pattern-',
-							':repeatInterval': 31,
-							':repeatMax': 1,
-							':repeatUnit': 'hours',
-							':requestBody': { a: 1, b: 2 },
-							':requestHeaders': { a: '1', b: '2' },
-							':requestMethod': 'POST',
-							':requestUrl': 'https://httpbin.org/anything-2',
-							':rescheduleOnEvent': false,
-							':retryLimit': 4,
-							':ruleId': 'rule-id',
-							':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
-							':title': 'updated',
-							':ts': item.Update!.ExpressionAttributeValues![':ts'],
-							':updatedAt': item.Update!.ExpressionAttributeValues![':updatedAt']
-						}) &&
-						item.Update?.UpdateExpression ===
-							`SET ${[
-								'#ts = :ts',
-								'#updatedAt = :updatedAt',
-								'#concurrency = :concurrency',
-								'#conditionFilter = :conditionFilter',
-								'#description = :description',
-								'#eventDelayDebounce = :eventDelayDebounce',
-								'#eventDelayUnit = :eventDelayUnit',
-								'#eventDelayValue = :eventDelayValue',
-								'#eventPattern = :eventPattern',
-								'#namespace__eventPattern = :namespace__eventPattern',
-								'#noAfter = :noAfter',
-								'#noBefore = :noBefore',
-								'#repeatInterval = :repeatInterval',
-								'#repeatMax = :repeatMax',
-								'#repeatUnit = :repeatUnit',
-								'#requestBody = :requestBody',
-								'#requestHeaders = :requestHeaders',
-								'#requestMethod = :requestMethod',
-								'#requestUrl = :requestUrl',
-								'#rescheduleOnEvent = :rescheduleOnEvent',
-								'#retryLimit = :retryLimit',
-								'#ruleId = :ruleId',
-								'#scheduledDate = :scheduledDate',
-								'#title = :title'
-							].join(', ')}`
-					);
-				})
-			).toBe(true);
 
 			expect(res.__updatedAt).not.toEqual(task.__updatedAt);
 		});
 
 		it('should update by fork', async () => {
 			const currentYear = new Date().getFullYear();
+			const task = await hooks.registerTask(createTestTask());
 
 			// @ts-expect-error
-			const forkTask1 = await hooks.registerForkTask({
-				forkId: 'fork-id-1',
+			const forkTask = await hooks.registerForkTask({
+				forkId: 'fork-id',
 				primaryTask: task
 			});
-
-			// @ts-expect-error
-			const forkTask2 = await hooks.registerForkTask({
-				forkId: 'fork-id-2',
-				primaryTask: task
-			});
-
-			await Promise.all([
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(task)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(task, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask1, { eventDelayDebounce: true })),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2)),
-				// @ts-expect-error
-				hooks.registerDelayedSubTask(createTestSubTaskInput(forkTask2, { eventDelayDebounce: true }))
-			]);
-			vi.mocked(hooks.db.tasks.query).mockClear();
 
 			const res = await hooks.updateTask({
 				concurrency: !task.concurrency,
@@ -8032,8 +7785,8 @@ describe('/index.ts', () => {
 				eventDelayValue: task.eventDelayValue + 1,
 				eventPattern: 'event-pattern-',
 				fork: true,
-				id: 'fork-id-1',
-				namespace: task.namespace,
+				id: 'fork-id',
+				namespace: 'spec',
 				noAfter: `${currentYear + 1}-01-01T00:00:00-03:00`,
 				noBefore: `${currentYear + 1}-01-01T00:00:00.000Z`,
 				repeatInterval: task.repeatInterval + 1,
@@ -8050,126 +7803,99 @@ describe('/index.ts', () => {
 				title: 'updated'
 			});
 
-			expect(hooks.db.tasks.query).toHaveBeenCalledOnce();
-			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
-				item: {
-					id: await hooks.uuidFromString('fork-id-1'),
-					namespace: 'spec#FORK'
+			expect(hooks.db.tasks.update).toHaveBeenCalledWith({
+				attributeNames: {
+					'#concurrency': 'concurrency',
+					'#conditionFilter': 'conditionFilter',
+					'#description': 'description',
+					'#eventDelayDebounce': 'eventDelayDebounce',
+					'#eventDelayUnit': 'eventDelayUnit',
+					'#eventDelayValue': 'eventDelayValue',
+					'#eventPattern': 'eventPattern',
+					'#namespace__eventPattern': 'namespace__eventPattern',
+					'#noAfter': 'noAfter',
+					'#noBefore': 'noBefore',
+					'#repeatInterval': 'repeatInterval',
+					'#repeatMax': 'repeatMax',
+					'#repeatUnit': 'repeatUnit',
+					'#requestBody': 'requestBody',
+					'#requestHeaders': 'requestHeaders',
+					'#requestMethod': 'requestMethod',
+					'#requestUrl': 'requestUrl',
+					'#rescheduleOnEvent': 'rescheduleOnEvent',
+					'#retryLimit': 'retryLimit',
+					'#ruleId': 'ruleId',
+					'#scheduledDate': 'scheduledDate',
+					'#title': 'title'
 				},
-				limit: Infinity,
-				select: ['id', 'namespace']
-			});
-
-			expect(hooks.db.tasks.transaction).toHaveBeenCalledWith({
-				TransactItems: [
-					{
-						Update: {
-							ExpressionAttributeNames: {
-								'#ts': '__ts',
-								'#updatedAt': '__updatedAt',
-								'#concurrency': 'concurrency',
-								'#conditionFilter': 'conditionFilter',
-								'#description': 'description',
-								'#eventDelayDebounce': 'eventDelayDebounce',
-								'#eventDelayUnit': 'eventDelayUnit',
-								'#eventDelayValue': 'eventDelayValue',
-								'#eventPattern': 'eventPattern',
-								'#namespace__eventPattern': 'namespace__eventPattern',
-								'#noAfter': 'noAfter',
-								'#noBefore': 'noBefore',
-								'#repeatInterval': 'repeatInterval',
-								'#repeatMax': 'repeatMax',
-								'#repeatUnit': 'repeatUnit',
-								'#requestBody': 'requestBody',
-								'#requestHeaders': 'requestHeaders',
-								'#requestMethod': 'requestMethod',
-								'#requestUrl': 'requestUrl',
-								'#rescheduleOnEvent': 'rescheduleOnEvent',
-								'#retryLimit': 'retryLimit',
-								'#ruleId': 'ruleId',
-								'#scheduledDate': 'scheduledDate',
-								'#title': 'title'
-							},
-							ExpressionAttributeValues: {
-								':ts': expect.any(Number),
-								':updatedAt': expect.any(String),
-								':concurrency': true,
-								':conditionFilter': {
-									alias: '',
-									criteriaMapper: null,
-									defaultValue: '',
-									matchInArray: true,
-									matchValue: 'value',
-									normalize: true,
-									operator: 'EQUALS',
-									type: 'STRING',
-									valueMapper: null,
-									valuePath: ['key']
-								},
-								':description': 'updated',
-								':eventDelayDebounce': true,
-								':eventDelayUnit': 'hours',
-								':eventDelayValue': 1,
-								':eventPattern': 'event-pattern-',
-								':namespace__eventPattern': 'spec#event-pattern-',
-								':noAfter': `${currentYear + 1}-01-01T03:00:00.000Z`,
-								':noBefore': `${currentYear + 1}-01-01T00:00:00.000Z`,
-								':repeatInterval': 31,
-								':repeatMax': 1,
-								':repeatUnit': 'hours',
-								':requestBody': {
-									a: 1,
-									b: 2
-								},
-								':requestHeaders': {
-									a: '1',
-									b: '2'
-								},
-								':requestMethod': 'POST',
-								':requestUrl': 'https://httpbin.org/anything-2',
-								':rescheduleOnEvent': false,
-								':retryLimit': 4,
-								':ruleId': 'rule-id',
-								':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
-								':title': 'updated'
-							},
-							Key: {
-								id: await hooks.uuidFromString('fork-id-1'),
-								namespace: 'spec#FORK'
-							},
-							TableName: 'use-dynamodb-reactive-hooks-tasks-spec',
-							UpdateExpression: `SET ${[
-								'#ts = :ts',
-								'#updatedAt = :updatedAt',
-								'#concurrency = :concurrency',
-								'#conditionFilter = :conditionFilter',
-								'#description = :description',
-								'#eventDelayDebounce = :eventDelayDebounce',
-								'#eventDelayUnit = :eventDelayUnit',
-								'#eventDelayValue = :eventDelayValue',
-								'#eventPattern = :eventPattern',
-								'#namespace__eventPattern = :namespace__eventPattern',
-								'#noAfter = :noAfter',
-								'#noBefore = :noBefore',
-								'#repeatInterval = :repeatInterval',
-								'#repeatMax = :repeatMax',
-								'#repeatUnit = :repeatUnit',
-								'#requestBody = :requestBody',
-								'#requestHeaders = :requestHeaders',
-								'#requestMethod = :requestMethod',
-								'#requestUrl = :requestUrl',
-								'#rescheduleOnEvent = :rescheduleOnEvent',
-								'#retryLimit = :retryLimit',
-								'#ruleId = :ruleId',
-								'#scheduledDate = :scheduledDate',
-								'#title = :title'
-							].join(', ')}`
-						}
+				attributeValues: {
+					':concurrency': true,
+					':conditionFilter': {
+						alias: '',
+						criteriaMapper: null,
+						defaultValue: '',
+						matchInArray: true,
+						matchValue: 'value',
+						normalize: true,
+						operator: 'EQUALS',
+						type: 'STRING',
+						valuePath: ['key'],
+						valueMapper: null
+					},
+					':description': 'updated',
+					':eventDelayDebounce': true,
+					':eventDelayUnit': 'hours',
+					':eventDelayValue': 1,
+					':eventPattern': 'event-pattern-',
+					':namespace__eventPattern': 'spec#event-pattern-',
+					':noAfter': `${currentYear + 1}-01-01T03:00:00.000Z`,
+					':noBefore': `${currentYear + 1}-01-01T00:00:00.000Z`,
+					':repeatInterval': 31,
+					':repeatMax': 1,
+					':repeatUnit': 'hours',
+					':requestBody': { a: 1, b: 2 },
+					':requestHeaders': { a: '1', b: '2' },
+					':requestMethod': 'POST',
+					':requestUrl': 'https://httpbin.org/anything-2',
+					':rescheduleOnEvent': false,
+					':retryLimit': 4,
+					':ruleId': 'rule-id',
+					':scheduledDate': `${currentYear + 1}-01-01T03:00:00.000Z`,
+					':title': 'updated'
+				},
+				filter: {
+					item: {
+						id: forkTask.id,
+						namespace: 'spec#FORK'
 					}
-				]
+				},
+				updateExpression: `SET ${[
+					'#concurrency = :concurrency',
+					'#conditionFilter = :conditionFilter',
+					'#description = :description',
+					'#eventDelayDebounce = :eventDelayDebounce',
+					'#eventDelayUnit = :eventDelayUnit',
+					'#eventDelayValue = :eventDelayValue',
+					'#eventPattern = :eventPattern',
+					'#namespace__eventPattern = :namespace__eventPattern',
+					'#noAfter = :noAfter',
+					'#noBefore = :noBefore',
+					'#repeatInterval = :repeatInterval',
+					'#repeatMax = :repeatMax',
+					'#repeatUnit = :repeatUnit',
+					'#requestBody = :requestBody',
+					'#requestHeaders = :requestHeaders',
+					'#requestMethod = :requestMethod',
+					'#requestUrl = :requestUrl',
+					'#rescheduleOnEvent = :rescheduleOnEvent',
+					'#retryLimit = :retryLimit',
+					'#ruleId = :ruleId',
+					'#scheduledDate = :scheduledDate',
+					'#title = :title'
+				].join(', ')}`
 			});
 
-			expect(res.__updatedAt).not.toEqual(task.__updatedAt);
+			expect(res.__updatedAt).not.toEqual(forkTask.__updatedAt);
 		});
 	});
 

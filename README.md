@@ -188,6 +188,28 @@ const logs = await hooks.fetchLogs({
 	from: new Date(Date.now() - 86400_000).toISOString(), // Last 24 hours
 	to: new Date().toISOString()
 });
+
+// Fetch webhooks by primary task namespace (including forks)
+const tasksByNamespace = await hooks.fetchTasksByPrimaryTask({
+	primaryNamespace: 'my-app'
+});
+
+// Fetch webhooks by primary task ID (including forks)
+const tasksByPrimaryId = await hooks.fetchTasksByPrimaryTask({
+	primaryId: 'task-id',
+	primaryNamespace: 'my-app'
+});
+
+// Fetch webhooks with options (including forks)
+const tasksByNamespaceWithOptions = await hooks.fetchTasksByPrimaryTask({
+	primaryNamespace: 'my-app',
+	desc: true, // Sort descending
+	limit: 10,
+	chunkLimit: 5, // Process in chunks of 5
+	onChunk: async chunk => {
+		// Handle each chunk
+	}
+});
 ```
 
 ### Managing Webhooks
