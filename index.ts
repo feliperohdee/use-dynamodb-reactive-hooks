@@ -44,13 +44,13 @@ namespace Hooks {
 	export type Log = z.infer<typeof schema.log>;
 	export type QueryActiveTasksInput = z.input<typeof schema.queryActiveTasksInput>;
 	export type RegisterForkTaskInput = z.input<typeof schema.registerForkTaskInput>;
+	export type RegisterTask = z.input<typeof schema.registerTask>;
 	export type SetTaskActiveInput = z.input<typeof schema.setTaskActiveInput>;
 	export type SetTaskErrorInput = z.input<typeof schema.setTaskErrorInput>;
 	export type SetTaskLockInput = z.input<typeof schema.setTaskLockInput>;
 	export type SetTaskSuccessInput = z.input<typeof schema.setTaskSuccessInput>;
 	export type Task = z.infer<typeof schema.task>;
 	export type TaskExecutionType = z.infer<typeof schema.taskExecutionType>;
-	export type TaskInput = z.input<typeof schema.taskInput>;
 	export type TaskKeys = z.infer<typeof schema.taskKeys>;
 	export type TaskRule = z.infer<typeof schema.taskRule>;
 	export type TaskRuleResult = z.infer<typeof schema.taskRuleResult>;
@@ -62,7 +62,7 @@ namespace Hooks {
 	export type UpdateTaskInput = z.input<typeof schema.updateTaskInput>;
 }
 
-const taskShape = (input: Partial<Hooks.Task | Hooks.TaskInput>): Hooks.Task => {
+const taskShape = (input: Partial<Hooks.Task>): Hooks.Task => {
 	return zDefault(schema.task, input);
 };
 
@@ -258,6 +258,7 @@ class Hooks {
 
 						task = await this.registerForkTask({
 							forkId: args.forkId,
+							overwrite: args.forkOverwrite,
 							primaryTask: task!
 						});
 
@@ -1010,7 +1011,7 @@ class Hooks {
 		});
 	}
 
-	private async registerForkTask(input: Hooks.RegisterForkTaskInput, overwrite: boolean = false): Promise<Hooks.Task> {
+	private async registerForkTask(input: Hooks.RegisterForkTaskInput): Promise<Hooks.Task> {
 		const args = await schema.registerForkTaskInput.parseAsync(input);
 
 		if (args.primaryTask.status === 'DISABLED') {
@@ -1023,7 +1024,7 @@ class Hooks {
 
 		const id = await this.uuidFromString(args.forkId);
 		const namespace = `${args.primaryTask.primaryNamespace}#FORK`;
-		const currentFork = !overwrite ? await this.getTaskInternal({ id, namespace }) : null;
+		const currentFork = !args.overwrite ? await this.getTaskInternal({ id, namespace }) : null;
 
 		if (currentFork) {
 			return currentFork;
@@ -1061,7 +1062,7 @@ class Hooks {
 				status: 'ACTIVE',
 				type: 'FORK'
 			}),
-			{ overwrite }
+			{ overwrite: args.overwrite }
 		);
 	}
 
@@ -1069,15 +1070,16 @@ class Hooks {
 		this.rules.set(name, rule);
 	}
 
-	async registerTask(input: Hooks.TaskInput): Promise<Hooks.Task> {
-		const args = await schema.taskInput.parseAsync(input);
+	async registerTask(input: Hooks.RegisterTask): Promise<Hooks.Task> {
+		const args = await schema.registerTask.parseAsync(input);
 		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : '-';
 		const id = args.id || this.uuid();
+		const { overwrite, ...task } = args;
 
 		return this.db.tasks.put(
 			taskShape({
-				...args,
-				eventPattern: args.eventPattern || '-',
+				...task,
+				eventPattern: task.eventPattern || '-',
 				firstErrorDate: '',
 				firstExecutionDate: '',
 				firstScheduledDate: scheduledDate,
@@ -1089,17 +1091,18 @@ class Hooks {
 				lastResponseBody: '',
 				lastResponseHeaders: null,
 				lastResponseStatus: 0,
-				namespace__eventPattern: args.eventPattern ? `${args.namespace}#${args.eventPattern}` : '-',
+				namespace__eventPattern: task.eventPattern ? `${task.namespace}#${task.eventPattern}` : '-',
 				primaryId: id,
-				primaryNamespace: args.namespace,
+				primaryNamespace: task.namespace,
 				totalErrors: 0,
 				totalExecutions: 0,
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
-				noAfter: args.noAfter ? new Date(args.noAfter).toISOString() : '',
-				noBefore: args.noBefore ? new Date(args.noBefore).toISOString() : '',
+				noAfter: task.noAfter ? new Date(task.noAfter).toISOString() : '',
+				noBefore: task.noBefore ? new Date(task.noBefore).toISOString() : '',
 				scheduledDate
-			})
+			}),
+			{ overwrite }
 		);
 	}
 
@@ -1572,6 +1575,7 @@ class Hooks {
 							eventDelayValue: args.eventDelayValue || null,
 							forkId: args.forkId || null,
 							forkOnly: args.forkOnly || false,
+							forkOverwrite: args.forkOverwrite || false,
 							date,
 							executionType: 'EVENT',
 							keys: items,
@@ -1639,6 +1643,7 @@ class Hooks {
 						eventDelayValue: null,
 						forkId: null,
 						forkOnly: false,
+						forkOverwrite: false,
 						date,
 						executionType: 'SCHEDULED',
 						keys: items,

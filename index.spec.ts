@@ -23,7 +23,7 @@ global.fetch = vi.fn(async url => {
 	};
 });
 
-const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.TaskInput>): Hooks.Task => {
+const createTestTask = (scheduleDelay: number = 0, options?: Partial<Hooks.Task>): Hooks.Task => {
 	return taskShape({
 		namespace: 'spec',
 		repeatInterval: 30,
@@ -1071,6 +1071,7 @@ describe('/index.ts', () => {
 				// @ts-expect-error
 				expect(hooks.registerForkTask).toHaveBeenCalledWith({
 					forkId: 'fork-id',
+					overwrite: false,
 					primaryTask: task
 				});
 
@@ -1165,6 +1166,7 @@ describe('/index.ts', () => {
 					executionType: 'EVENT',
 					forkId: 'fork-id',
 					forkOnly: true,
+					forkOverwrite: true,
 					keys: [{ id: task.id, namespace: 'spec' }],
 					requestBody: null,
 					requestHeaders: null,
@@ -1178,6 +1180,7 @@ describe('/index.ts', () => {
 				// @ts-expect-error
 				expect(hooks.registerForkTask).toHaveBeenCalledWith({
 					forkId: 'fork-id',
+					overwrite: true,
 					primaryTask: task
 				});
 
@@ -1219,6 +1222,7 @@ describe('/index.ts', () => {
 				// @ts-expect-error
 				expect(hooks.registerForkTask).toHaveBeenCalledWith({
 					forkId: 'fork-id',
+					overwrite: false,
 					primaryTask: task
 				});
 
@@ -1320,13 +1324,11 @@ describe('/index.ts', () => {
 				);
 
 				// @ts-expect-error
-				forkTask = await hooks.registerForkTask(
-					{
-						forkId: 'fork-id',
-						primaryTask: task
-					},
-					true
-				);
+				forkTask = await hooks.registerForkTask({
+					forkId: 'fork-id',
+					overwrite: true,
+					primaryTask: task
+				});
 
 				// @ts-expect-error
 				vi.mocked(hooks.registerForkTask).mockClear();
@@ -4883,15 +4885,19 @@ describe('/index.ts', () => {
 			});
 		});
 
-		it('should overwrite fork if overwrite = true', async () => {
+		it('should overwrite', async () => {
 			// @ts-expect-error
-			const res = await hooks.registerForkTask(
-				{
-					forkId: 'fork-id',
-					primaryTask: task
-				},
-				true
-			);
+			await hooks.registerForkTask({
+				forkId: 'fork-id',
+				primaryTask: task
+			});
+
+			// @ts-expect-error
+			const res = await hooks.registerForkTask({
+				forkId: 'fork-id',
+				overwrite: true,
+				primaryTask: task
+			});
 
 			expect(hooks.db.tasks.put).toHaveBeenCalledWith(expect.any(Object), {
 				overwrite: true
@@ -5121,6 +5127,73 @@ describe('/index.ts', () => {
 			const res = await hooks.registerTask({
 				id: 'abc#12345678-1234-1234-1234-123456789012',
 				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			expect(res).toEqual({
+				__createdAt: expect.any(String),
+				__ts: expect.any(Number),
+				__updatedAt: expect.any(String),
+				concurrency: false,
+				conditionFilter: null,
+				description: '',
+				eventDelayDebounce: false,
+				eventDelayUnit: 'minutes',
+				eventDelayValue: 0,
+				eventPattern: '-',
+				firstErrorDate: '',
+				firstExecutionDate: '',
+				firstScheduledDate: '',
+				forkId: '',
+				id: 'abc#12345678-1234-1234-1234-123456789012',
+				lastError: '',
+				lastErrorDate: '',
+				lastErrorExecutionType: '',
+				lastExecutionDate: '',
+				lastExecutionType: '',
+				lastResponseBody: '',
+				lastResponseHeaders: null,
+				lastResponseStatus: 0,
+				namespace: 'spec',
+				namespace__eventPattern: '-',
+				noAfter: '',
+				noBefore: '',
+				pid: '',
+				primaryId: expect.any(String),
+				primaryNamespace: 'spec',
+				repeatInterval: 0,
+				repeatMax: 0,
+				repeatUnit: 'minutes',
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'GET',
+				requestUrl: 'https://httpbin.org/anything',
+				rescheduleOnEvent: true,
+				retryLimit: 3,
+				ruleId: '',
+				scheduledDate: '-',
+				status: 'ACTIVE',
+				title: '',
+				totalErrors: 0,
+				totalExecutions: 0,
+				totalFailedExecutions: 0,
+				totalSuccessfulExecutions: 0,
+				type: 'PRIMARY',
+				ttl: 0
+			});
+		});
+
+		it('should overwrite', async () => {
+			await hooks.registerTask({
+				id: 'abc#12345678-1234-1234-1234-123456789012',
+				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything'
+			});
+
+			const res = await hooks.registerTask({
+				id: 'abc#12345678-1234-1234-1234-123456789012',
+				namespace: 'spec',
+				overwrite: true,
 				requestUrl: 'https://httpbin.org/anything'
 			});
 
@@ -7361,6 +7434,7 @@ describe('/index.ts', () => {
 					executionType: 'EVENT',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: expect.arrayContaining(
 						_.map(tasks.slice(0, 2), task => {
 							return {
@@ -7403,6 +7477,7 @@ describe('/index.ts', () => {
 					executionType: 'EVENT',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: expect.arrayContaining(
 						_.map(tasks.slice(0, 2), task => {
 							return {
@@ -7464,6 +7539,7 @@ describe('/index.ts', () => {
 					executionType: 'EVENT',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: [
 						{
 							id: tasks[0].id,
@@ -7486,6 +7562,7 @@ describe('/index.ts', () => {
 					executionType: 'EVENT',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: [
 						{
 							id: tasks[1].id,
@@ -7526,6 +7603,7 @@ describe('/index.ts', () => {
 					executionType: 'SCHEDULED',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: expect.arrayContaining(
 						_.map(tasks.slice(0, 2), task => {
 							return {
@@ -7569,6 +7647,7 @@ describe('/index.ts', () => {
 					executionType: 'SCHEDULED',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: [
 						{
 							id: tasks[0].id,
@@ -7591,6 +7670,7 @@ describe('/index.ts', () => {
 					executionType: 'SCHEDULED',
 					forkId: null,
 					forkOnly: false,
+					forkOverwrite: false,
 					keys: [
 						{
 							id: tasks[1].id,

@@ -95,79 +95,6 @@ const taskRule = z
 	.args(z.object({ task }))
 	.returns(z.union([z.array(taskRuleResult), z.promise(z.array(taskRuleResult))]));
 
-const taskInput = task
-	.extend({
-		noAfter: z.union([z.literal(''), z.string().datetime({ offset: true }).refine(isFutureDate, 'noAfter cannot be in the past')]),
-		noBefore: z.union([z.literal(''), z.string().datetime({ offset: true }).refine(isFutureDate, 'noBefore cannot be in the past')]),
-		scheduledDate: z.union([
-			z.literal(''),
-			z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past')
-		])
-	})
-	.omit({
-		__createdAt: true,
-		__ts: true,
-		__updatedAt: true,
-		firstErrorDate: true,
-		firstExecutionDate: true,
-		firstScheduledDate: true,
-		forkId: true,
-		lastError: true,
-		lastErrorDate: true,
-		lastErrorExecutionType: true,
-		lastExecutionDate: true,
-		lastExecutionType: true,
-		lastResponseBody: true,
-		lastResponseHeaders: true,
-		lastResponseStatus: true,
-		namespace__eventPattern: true,
-		pid: true,
-		primaryId: true,
-		primaryNamespace: true,
-		status: true,
-		totalErrors: true,
-		totalExecutions: true,
-		totalFailedExecutions: true,
-		totalSuccessfulExecutions: true,
-		ttl: true,
-		type: true
-	})
-	.partial({
-		concurrency: true,
-		conditionFilter: true,
-		description: true,
-		eventDelayDebounce: true,
-		eventDelayUnit: true,
-		eventDelayValue: true,
-		eventPattern: true,
-		id: true,
-		noAfter: true,
-		noBefore: true,
-		repeatInterval: true,
-		repeatMax: true,
-		repeatUnit: true,
-		requestBody: true,
-		requestHeaders: true,
-		requestMethod: true,
-		rescheduleOnEvent: true,
-		ruleId: true,
-		scheduledDate: true,
-		title: true
-	})
-	.refine(
-		data => {
-			if (data.noAfter && data.noBefore) {
-				return date1IsAfterDate2(data.noAfter, data.noBefore);
-			}
-
-			return true;
-		},
-		{
-			message: 'noAfter must be after noBefore',
-			path: ['noAfter']
-		}
-	);
-
 const callWebhookInput = z
 	.object({
 		conditionData: z.record(z.any()).nullable(),
@@ -178,6 +105,7 @@ const callWebhookInput = z
 		eventDelayValue: z.number().min(0).nullable(),
 		forkId: z.string().nullable(),
 		forkOnly: z.boolean(),
+		forkOverwrite: z.boolean().default(false),
 		ruleId: z.string().nullable(),
 		keys: z.array(taskKeys)
 	})
@@ -303,8 +231,83 @@ const queryActiveTasksInput = z.union([
 
 const registerForkTaskInput = z.object({
 	forkId: z.string(),
+	overwrite: z.boolean().default(false),
 	primaryTask: task
 });
+
+const registerTask = task
+	.extend({
+		noAfter: z.union([z.literal(''), z.string().datetime({ offset: true }).refine(isFutureDate, 'noAfter cannot be in the past')]),
+		noBefore: z.union([z.literal(''), z.string().datetime({ offset: true }).refine(isFutureDate, 'noBefore cannot be in the past')]),
+		overwrite: z.boolean().default(false),
+		scheduledDate: z.union([
+			z.literal(''),
+			z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past')
+		])
+	})
+	.omit({
+		__createdAt: true,
+		__ts: true,
+		__updatedAt: true,
+		firstErrorDate: true,
+		firstExecutionDate: true,
+		firstScheduledDate: true,
+		forkId: true,
+		lastError: true,
+		lastErrorDate: true,
+		lastErrorExecutionType: true,
+		lastExecutionDate: true,
+		lastExecutionType: true,
+		lastResponseBody: true,
+		lastResponseHeaders: true,
+		lastResponseStatus: true,
+		namespace__eventPattern: true,
+		pid: true,
+		primaryId: true,
+		primaryNamespace: true,
+		status: true,
+		totalErrors: true,
+		totalExecutions: true,
+		totalFailedExecutions: true,
+		totalSuccessfulExecutions: true,
+		ttl: true,
+		type: true
+	})
+	.partial({
+		concurrency: true,
+		conditionFilter: true,
+		description: true,
+		eventDelayDebounce: true,
+		eventDelayUnit: true,
+		eventDelayValue: true,
+		eventPattern: true,
+		id: true,
+		noAfter: true,
+		noBefore: true,
+		repeatInterval: true,
+		repeatMax: true,
+		repeatUnit: true,
+		requestBody: true,
+		requestHeaders: true,
+		requestMethod: true,
+		rescheduleOnEvent: true,
+		ruleId: true,
+		scheduledDate: true,
+		title: true
+	})
+	.refine(
+		data => {
+			if (data.noAfter && data.noBefore) {
+				return date1IsAfterDate2(data.noAfter, data.noBefore);
+			}
+
+			return true;
+		},
+		{
+			message: 'noAfter must be after noBefore',
+			path: ['noAfter']
+		}
+	);
 
 const setTaskActiveInput = z.object({
 	active: z.boolean(),
@@ -346,6 +349,7 @@ const triggerInput = z.union([
 			eventDelayValue: z.number().min(0).optional(),
 			forkId: z.string().optional(),
 			forkOnly: z.boolean().optional(),
+			forkOverwrite: z.boolean().default(false),
 			id: taskId,
 			namespace: z.string(),
 			ruleId: z.string().optional()
@@ -361,6 +365,7 @@ const triggerInput = z.union([
 			eventPatternPrefix: z.boolean().default(false),
 			forkId: z.string().optional(),
 			forkOnly: z.boolean().optional(),
+			forkOverwrite: z.boolean().default(false),
 			namespace: z.string(),
 			ruleId: z.string().optional()
 		})
@@ -420,13 +425,13 @@ export {
 	log,
 	queryActiveTasksInput,
 	registerForkTaskInput,
+	registerTask,
 	setTaskErrorInput,
 	setTaskLockInput,
 	setTaskSuccessInput,
+	setTaskActiveInput,
 	task,
 	taskExecutionType,
-	setTaskActiveInput,
-	taskInput,
 	taskKeys,
 	taskRule,
 	taskRuleResult,
