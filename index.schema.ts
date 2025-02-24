@@ -152,6 +152,7 @@ const fetchTasksByPrimaryTaskInput = z.object({
 		.returns(z.promise(z.void()))
 		.optional(),
 	primaryId: z.string().optional(),
+	primaryIdPrefix: z.boolean().default(false),
 	primaryNamespace: z.string(),
 	startKey: z.record(z.any()).nullable().default(null)
 });

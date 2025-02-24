@@ -3208,6 +3208,7 @@ describe('/index.ts', () => {
 					primaryNamespace: 'spec'
 				},
 				limit: 100,
+				prefix: false,
 				scanIndexForward: true,
 				startKey: null
 			});
@@ -3243,6 +3244,7 @@ describe('/index.ts', () => {
 				},
 				limit: 10,
 				onChunk: expect.any(Function),
+				prefix: false,
 				scanIndexForward: false,
 				startKey: null
 			});
@@ -3274,6 +3276,44 @@ describe('/index.ts', () => {
 					primaryNamespace: 'spec'
 				},
 				limit: 100,
+				prefix: false,
+				scanIndexForward: true,
+				startKey: null
+			});
+
+			expect(res).toEqual({
+				count: 2,
+				items: expect.arrayContaining(
+					[...pick(tasks), ...pick([forkTask])].filter(task => {
+						return task.primaryId === tasks[0].id;
+					})
+				),
+				lastEvaluatedKey: null
+			});
+		});
+
+		it('should fetch by [namespace, id] and primaryIdPrefix = true', async () => {
+			const res = await hooks.fetchTasksByPrimaryTask({
+				primaryId: tasks[0].id.slice(0, 3),
+				primaryIdPrefix: true,
+				primaryNamespace: 'spec'
+			});
+
+			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
+				attributeNames: {
+					'#type': 'type'
+				},
+				attributeValues: {
+					':fork': 'FORK',
+					':primary': 'PRIMARY'
+				},
+				filterExpression: '#type = :primary OR #type = :fork',
+				item: {
+					primaryId: tasks[0].id.slice(0, 3),
+					primaryNamespace: 'spec'
+				},
+				limit: 100,
+				prefix: true,
 				scanIndexForward: true,
 				startKey: null
 			});

@@ -753,6 +753,7 @@ class Hooks {
 							primaryNamespace: args.primaryNamespace
 						},
 			limit: args.limit,
+			prefix: args.primaryIdPrefix,
 			scanIndexForward: args.desc ? false : true,
 			startKey: args.startKey
 		};
