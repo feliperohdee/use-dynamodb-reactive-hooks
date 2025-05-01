@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { promiseAllSettled, promiseMap } from 'use-async-helpers';
+import { promiseAllSettled, promiseMap, PromiseQueue } from 'use-async-helpers';
 import { TransactWriteCommandOutput } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
 import FilterCriteria from 'use-filter-criteria';
@@ -80,8 +80,8 @@ class Hooks {
 	public customWebhookCall?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
 	public db: { tasks: Dynamodb<Hooks.Task> };
 	public filterCriteria: FilterCriteria;
-	public maxConcurrency: number;
 	public maxErrors: number;
+	public promiseQueue: PromiseQueue;
 	public rules: Map<string, Hooks.TaskRule>;
 	public webhookChunkSize: number;
 	public webhooks: Webhooks;
@@ -178,8 +178,8 @@ class Hooks {
 		this.customWebhookCall = options.webhookCaller;
 		this.db = { tasks };
 		this.filterCriteria = options.filterCriteria || new FilterCriteria();
-		this.maxConcurrency = options.maxConcurrency || DEFAULT_MAX_CONCURRENCY;
 		this.maxErrors = options.maxErrors || 5;
+		this.promiseQueue = new PromiseQueue(Math.max(10, options.maxConcurrency || DEFAULT_MAX_CONCURRENCY));
 		this.rules = new Map();
 		this.webhookChunkSize = options.webhookChunkSize || 0;
 		this.webhooks = webhooks;
@@ -340,7 +340,7 @@ class Hooks {
 									retryLimit: task!.retryLimit
 								});
 							},
-							this.maxConcurrency
+							this.promiseQueue
 						);
 
 						const logsStats = _.reduce<Hooks.Log, Record<string, number>>(
@@ -428,7 +428,7 @@ class Hooks {
 			promiseTasks = [...promiseTasks, promiseTask];
 		}
 
-		const res = await promiseAllSettled(promiseTasks, this.maxConcurrency);
+		const res = await promiseAllSettled(promiseTasks, this.promiseQueue);
 
 		return _.compact(_.map(res, 'value'));
 	}
@@ -1206,7 +1206,7 @@ class Hooks {
 			];
 		}
 
-		await promiseAllSettled(promiseTasks, this.maxConcurrency);
+		await promiseAllSettled(promiseTasks, this.promiseQueue);
 
 		return (await this.getTaskInternal(
 			{
@@ -1506,6 +1506,7 @@ class Hooks {
 			onChunk: async () => {}
 		};
 
+		// event tasks
 		if (_.size(input) > 0) {
 			const args = await schema.triggerInput.parseAsync(input);
 
@@ -1574,7 +1575,7 @@ class Hooks {
 								promiseTasks = [...promiseTasks, promiseTask];
 							}
 
-							await promiseAllSettled(promiseTasks, this.maxConcurrency);
+							await promiseAllSettled(promiseTasks, this.promiseQueue);
 						} else {
 							// Original behavior - process all items at once
 							if (this.customWebhookCall) {
@@ -1596,6 +1597,7 @@ class Hooks {
 			return result;
 		}
 
+		// scheduled tasks
 		try {
 			await this.queryActiveTasks({
 				...queryActiveTasksOptions,
@@ -1642,7 +1644,7 @@ class Hooks {
 							promiseTasks = [...promiseTasks, promiseTask];
 						}
 
-						await promiseAllSettled(promiseTasks, this.maxConcurrency);
+						await promiseAllSettled(promiseTasks, this.promiseQueue);
 					} else {
 						// Original behavior - process all items at once
 						if (this.customWebhookCall) {

@@ -2,7 +2,7 @@
 	"name": "use-dynamodb-reactive-hooks",
 	"dependencies": {
 		"lodash": "^4.17.21",
-		"use-async-helpers": "^1.0.26",
+		"use-async-helpers": "^1.0.28",
 		"use-dynamodb": "^1.0.63",
 		"use-dynamodb-webhooks": "^1.0.23",
 		"use-filter-criteria": "^1.0.65",
@@ -33,7 +33,8 @@
 		"npm-publish": "yarn test --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
 		"npm-publish-only": "yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
 		"test": "./.test.sh",
+		"test:basic": "./.test.sh --reporter=basic",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.31"
+	"version": "1.0.32"
 }
