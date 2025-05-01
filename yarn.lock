@@ -1794,52 +1794,63 @@ typescript@^5.7.3:
   resolved "https://registry.yarnpkg.com/typescript/-/typescript-5.7.3.tgz#919b44a7dbb8583a9b856d162be24a54bf80073e"
   integrity sha512-84MVSjMEHP+FQRPy3pX9sTVV/INIex71s9TL2Gm5FG/WG1SqXeKyZ0k7/blY/4FdOzI12CBy1vGc4og/eus0fw==
 
+ulid@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/ulid/-/ulid-3.0.0.tgz#1170fd6865121bb3b912c32487c9c81149f18ccb"
+  integrity sha512-yvZYdXInnJve6LdlPIuYmURdS2NP41ZoF4QW7SXwbUKYt53+0eDAySO+rGSvM2O/ciuB/G+8N7GQrZ1mCJpuqw==
+
 undici-types@~6.20.0:
   version "6.20.0"
   resolved "https://registry.yarnpkg.com/undici-types/-/undici-types-6.20.0.tgz#8171bf22c1f588d1554d55bf204bc624af388433"
   integrity sha512-Ny6QZ2Nju20vw1SRHe3d9jVu6gJ+4e3+MMpqu7pqE5HT6WsTSlce++GQmK5UXS8mzV8DSYHrQH+Xrf2jVcuKNg==
 
-use-async-helpers@^1.0.21, use-async-helpers@^1.0.24, use-async-helpers@^1.0.25:
+use-async-helpers@^1.0.21, use-async-helpers@^1.0.24:
   version "1.0.25"
   resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.25.tgz#8074adb816a68fcb88266bf93dcee29ae94ae7f5"
   integrity sha512-bqr7Df5OVL/FUgUpgw5FRbFJ2+KyLjyFC2NwJRLWb1UcU4SDqVjFBBJDPPxDoj6EB87x9lFLo0LK+/fQhQln2Q==
 
-use-dynamodb-webhooks@^1.0.21:
-  version "1.0.21"
-  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.21.tgz#56481078f6935c058a57a27fbb5826176687f922"
-  integrity sha512-0wszdit8uaCmZbP3KgTqiaDwCnvzCXJ9O4KNq6SIyw7qLx3qHeA0WYvkCL0dfYwZEYL2dKo9zVgwLG9cEQv7sg==
+use-async-helpers@^1.0.26:
+  version "1.0.26"
+  resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.26.tgz#4408d96b5d0fba6ac0d314e2026423a3f7b5759c"
+  integrity sha512-Q+vV4gO3rf6bKG7x1xk9urD/Kkwnsu6WrsrziOPgXGIeKI7JizrZ4kAv9osF34hYPFL4sN3/eESN5zn9FANNJw==
+
+use-dynamodb-webhooks@^1.0.23:
+  version "1.0.23"
+  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.23.tgz#6e63c5b62083f271c1769efedddfd5294e14a13b"
+  integrity sha512-0egU4yLmW+RqMdHMLyw8NmfKcZUmjCyJ6z/SOa/t8q5X/dsm29oo4L734wViIZqsgkgQn3TdRRb+Q3LRZ5exmg==
   dependencies:
     lodash "^4.17.21"
-    use-dynamodb "^1.0.59"
-    use-http-error "^1.0.3"
+    ulid "^3.0.0"
+    use-dynamodb "^1.0.63"
+    use-http-error "^1.0.6"
     use-qs "^1.0.4"
-    use-zod-default "^1.0.1"
+    use-zod-default "^1.0.10"
     zod "^3.24.1"
 
-use-dynamodb@^1.0.59, use-dynamodb@^1.0.61:
-  version "1.0.61"
-  resolved "https://registry.yarnpkg.com/use-dynamodb/-/use-dynamodb-1.0.61.tgz#a716b684428ff7b2b0b5dd7581fbe6a4ce7fbe02"
-  integrity sha512-5nB3QzxzLAqZLg9TBR8wHIayyIf1polhMZWCcHYfEtIdsiKgO0rGCnYlUp28ZSfI6qWD/85uvavICzQ2vygTRA==
+use-dynamodb@^1.0.63:
+  version "1.0.63"
+  resolved "https://registry.yarnpkg.com/use-dynamodb/-/use-dynamodb-1.0.63.tgz#74a017758a7d1297033efa4dca7a959e4c369bae"
+  integrity sha512-zFQ/L493AmdjKEFMQJju+bGFLK6z9qo8mFFh/CiNSxghcYFd7bI7FHjRVHJa4JC7dyVvClRvrCkpY4xepXuRpQ==
   dependencies:
     "@aws-sdk/client-dynamodb" "^3.713.0"
     "@aws-sdk/lib-dynamodb" "^3.713.0"
     lodash "^4.17.21"
     use-async-helpers "^1.0.21"
 
-use-filter-criteria@^1.0.59:
-  version "1.0.59"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.59.tgz#8288f328d8b353156b1ad44487f13bf8510a70a1"
-  integrity sha512-vmwL2YtuCuw50JIcX68IMRDw7mK8unufKCwtBmAiOlm5xyaPT/AbQslAqkPbFteI3bqwE3wY5kc9kg1D54ANdA==
+use-filter-criteria@^1.0.65:
+  version "1.0.65"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.65.tgz#8c265821b171f7d1c86139be24e755b00d0ee8da"
+  integrity sha512-XMbuawKVSf53ZzGphhU2HHAO1tHtwkRxXve/kXxbQTd/HgfvXauUU9jw+QCPEnVSsyUFrWETa3SMmB2Fvai3Yw==
   dependencies:
     lodash "^4.17.21"
     use-async-helpers "^1.0.24"
     use-zod-default "^1.0.1"
     zod "^3.24.1"
 
-use-http-error@^1.0.3, use-http-error@^1.0.5:
-  version "1.0.5"
-  resolved "https://registry.yarnpkg.com/use-http-error/-/use-http-error-1.0.5.tgz#a37a54e9717b371a28ab70f07c3c9ded5aa9d2ef"
-  integrity sha512-CtHR2mqrfh6jUmJvHx0b7HvO0vZmTkEbp1DxEuJi6tdGkRdnSKh8ZmC68jBrnCSsKgybsEqev/nmCZd2u+NRkg==
+use-http-error@^1.0.6:
+  version "1.0.6"
+  resolved "https://registry.yarnpkg.com/use-http-error/-/use-http-error-1.0.6.tgz#5877e038ab0ae1fec417769b77b2e41031189406"
+  integrity sha512-uZf/uFhn1lLlZAyj3HZwjGCENZFPZYGJgkU0ABg7t/+vR8UEKcUDLy7Ws7erw3OT/iIZ26HVL7gszurJq0w3KA==
 
 use-qs@^1.0.4:
   version "1.0.4"
@@ -1848,10 +1859,17 @@ use-qs@^1.0.4:
   dependencies:
     lodash "^4.17.21"
 
-use-zod-default@^1.0.1, use-zod-default@^1.0.4:
+use-zod-default@^1.0.1:
   version "1.0.4"
   resolved "https://registry.yarnpkg.com/use-zod-default/-/use-zod-default-1.0.4.tgz#0706bd1bab4c125633146368eef07cd1441222fb"
   integrity sha512-xQNC/oC5qb0COWKrk31i+KwX0qHe3mKIBf/k91JiA2BWOZwYRqH0OkVqXTdb3zDTJs2gAXF8pomtNhuJkHpjMQ==
+  dependencies:
+    zod "^3.23.8"
+
+use-zod-default@^1.0.10:
+  version "1.0.10"
+  resolved "https://registry.yarnpkg.com/use-zod-default/-/use-zod-default-1.0.10.tgz#5413dbd47628e64022266f71b69035cc18ab177b"
+  integrity sha512-LhSREceUKGVTtI21wfTko+8byHYTIc4eXdjyBfvCe28zW0efN1BXyS7ZxgWOI9vIsqZ93nihqyC4IyyeTN//kw==
   dependencies:
     zod "^3.23.8"
 

@@ -1666,8 +1666,6 @@ class Hooks {
 
 	async updateTask(input: Hooks.UpdateTaskInput): Promise<Hooks.Task> {
 		const args = await schema.updateTaskInput.parseAsync(input);
-		const date = new Date();
-		const now = _.now();
 		const task = await this.getTaskInternal(
 			args.fork
 				? {

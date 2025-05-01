@@ -365,7 +365,7 @@ describe('/index.ts', () => {
 		});
 
 		afterEach(async () => {
-			await Promise.all([hooks.clearTasks('spec'), hooks.webhooks.clearLogs('spec')]);
+			await Promise.all([hooks.clearTasks('spec'), hooks.clearLogs('spec')]);
 		});
 
 		it('should works', async () => {
@@ -2642,7 +2642,7 @@ describe('/index.ts', () => {
 		});
 
 		afterAll(async () => {
-			await Promise.all([hooks.clearTasks('spec'), hooks.webhooks.clearLogs('spec')]);
+			await Promise.all([hooks.clearTasks('spec'), hooks.clearLogs('spec')]);
 		});
 
 		it('should fetch logs', async () => {
@@ -7293,7 +7293,7 @@ describe('/index.ts', () => {
 		});
 
 		afterEach(async () => {
-			await Promise.all([hooks.clearTasks('spec'), hooks.webhooks.clearLogs('spec')]);
+			await Promise.all([hooks.clearTasks('spec'), hooks.clearLogs('spec')]);
 		});
 
 		describe('EVENT', () => {

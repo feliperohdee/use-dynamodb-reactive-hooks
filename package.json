@@ -2,12 +2,12 @@
 	"name": "use-dynamodb-reactive-hooks",
 	"dependencies": {
 		"lodash": "^4.17.21",
-		"use-async-helpers": "^1.0.25",
-		"use-dynamodb": "^1.0.61",
-		"use-dynamodb-webhooks": "^1.0.21",
-		"use-filter-criteria": "^1.0.59",
-		"use-http-error": "^1.0.5",
-		"use-zod-default": "^1.0.4",
+		"use-async-helpers": "^1.0.26",
+		"use-dynamodb": "^1.0.63",
+		"use-dynamodb-webhooks": "^1.0.23",
+		"use-filter-criteria": "^1.0.65",
+		"use-http-error": "^1.0.6",
+		"use-zod-default": "^1.0.10",
 		"zod": "^3.24.2"
 	},
 	"devDependencies": {
@@ -35,5 +35,5 @@
 		"test": "./.test.sh",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.30"
+	"version": "1.0.31"
 }
