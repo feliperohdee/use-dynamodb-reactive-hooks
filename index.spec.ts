@@ -7505,7 +7505,7 @@ describe('/index.ts', () => {
 				});
 			});
 
-			it.skip('should process in chunks when webhookChunkSize is set', async () => {
+			it('should process in chunks when webhookChunkSize is set', async () => {
 				// Set webhookChunkSize
 				hooks.webhookChunkSize = 1;
 
