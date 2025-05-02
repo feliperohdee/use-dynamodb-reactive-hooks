@@ -1846,10 +1846,10 @@ use-dynamodb@^1.0.64:
     "@aws-sdk/lib-dynamodb" "^3.799.0"
     lodash "^4.17.21"
 
-use-filter-criteria@^1.0.69:
-  version "1.0.69"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.69.tgz#8768e2a33351a8b01ae54b49a770a797d1314bea"
-  integrity sha512-GJIylWDFwAdRqogZ6I4j/IUeAOdhhZipedl++ysUCudFYy9E79iR2N3qXouwaHnQKJVcWmqNXRmn3a3zuGHo9g==
+use-filter-criteria@^1.0.70:
+  version "1.0.70"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.70.tgz#f210499bddbe04edf8d8a500520b7af2e32b3958"
+  integrity sha512-lfI6g8ke3Ya8m7OjLxyKVPG7fsJ2NG0ZMYhwAFArS+MRK9e3BxfhDRyGr2wJMqOf6Hlsb+T0lat7WJ11uDkuyg==
   dependencies:
     lodash "^4.17.21"
     use-async-helpers "^1.0.29"
