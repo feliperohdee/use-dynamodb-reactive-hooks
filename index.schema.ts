@@ -21,11 +21,6 @@ const optionalRequestInput = z
 	.partial();
 
 const taskExecutionType = z.enum(['EVENT', 'SCHEDULED']);
-const taskId = z.union([
-	z.literal(''),
-	// uuid with optional namespace and optional suffix
-	z.string().regex(/^([a-zA-Z0-9]+#)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(#.*)?$/)
-]);
 const taskKeys = z.object({ id: z.string(), namespace: z.string() });
 const taskStatus = z.enum(['ACTIVE', 'DISABLED', 'MAX-ERRORS-REACHED', 'MAX-REPEAT-REACHED', 'PROCESSING']);
 const taskType = z.enum(['PRIMARY', 'FORK', 'SUBTASK']);
@@ -46,7 +41,7 @@ const task = z.object({
 	firstExecutionDate: z.union([z.string().datetime(), z.literal('')]),
 	firstScheduledDate: z.union([z.string().datetime(), z.literal('')]),
 	forkId: z.string(),
-	id: taskId,
+	id: z.string(),
 	lastError: z.string(),
 	lastErrorDate: z.union([z.string().datetime(), z.literal('')]),
 	lastErrorExecutionType: z.union([z.literal(''), taskExecutionType]),
@@ -118,7 +113,7 @@ const checkExecuteTaskInput = z.object({
 
 const debugConditionInput = z.object({
 	conditionData: z.record(z.any()).nullable(),
-	id: taskId,
+	id: z.string(),
 	namespace: z.string()
 });
 
@@ -251,7 +246,7 @@ const queryActiveTasksInput = z.union([
 		namespace: z.string()
 	}),
 	queryActiveTasksInputBase.extend({
-		id: taskId,
+		id: z.string(),
 		namespace: z.string()
 	}),
 	queryActiveTasksInputBase
@@ -378,7 +373,7 @@ const triggerInput = z.union([
 			forkId: z.string().optional(),
 			forkOnly: z.boolean().optional(),
 			forkOverwrite: z.boolean().default(false),
-			id: taskId,
+			id: z.string(),
 			namespace: z.string(),
 			ruleId: z.string().optional()
 		})

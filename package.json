@@ -2,9 +2,10 @@
 	"name": "use-dynamodb-reactive-hooks",
 	"dependencies": {
 		"lodash": "^4.17.21",
+		"ulid": "^3.0.0",
 		"use-async-helpers": "^1.0.31",
 		"use-dynamodb": "^1.0.64",
-		"use-dynamodb-webhooks": "^1.0.24",
+		"use-dynamodb-webhooks": "^1.0.25",
 		"use-filter-criteria": "^1.0.72",
 		"use-http-error": "^1.0.6",
 		"use-zod-default": "^1.0.10",
@@ -36,5 +37,5 @@
 		"test:basic": "./.test.sh --reporter=basic",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.37"
+	"version": "1.0.38"
 }

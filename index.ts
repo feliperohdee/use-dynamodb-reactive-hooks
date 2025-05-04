@@ -1,5 +1,6 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { encodeTime, ulid } from 'ulid';
 import { promiseAllSettled, promiseMap, PromiseQueue } from 'use-async-helpers';
 import { TransactWriteCommandOutput } from '@aws-sdk/lib-dynamodb';
 import Dynamodb, { concatConditionExpression, concatUpdateExpression } from 'use-dynamodb';
@@ -16,6 +17,34 @@ const MINUTE_IN_MS = 60 * 1000;
 const HOUR_IN_MS = 60 * MINUTE_IN_MS;
 const DAY_IN_MS = 24 * HOUR_IN_MS;
 const SUBTASK_TTL_IN_MS = 15 * DAY_IN_MS;
+
+const B32_CHARACTERS = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+const crockfordEncode = (input: Uint8Array): string => {
+	let bitsRead = 0;
+	let buffer = 0;
+	let output: number[] = [];
+	let reversedInput = new Uint8Array(input.slice().reverse());
+
+	for (const byte of reversedInput) {
+		buffer |= byte << bitsRead;
+		bitsRead += 8;
+
+		while (bitsRead >= 5) {
+			output.unshift(buffer & 0x1f);
+			buffer >>>= 5;
+			bitsRead -= 5;
+		}
+	}
+
+	if (bitsRead > 0) {
+		output.unshift(buffer & 0x1f);
+	}
+
+	return _.map(output, byte => {
+		return B32_CHARACTERS.charAt(byte);
+	}).join('');
+};
 
 namespace Hooks {
 	export type ConstructorOptions = {
@@ -213,7 +242,7 @@ class Hooks {
 		let promiseTasks: (() => Promise<Hooks.Task | null>)[] = [];
 
 		for (const keys of args.keys) {
-			let pid = this.uuid();
+			let pid = crypto.randomUUID();
 			let task = await this.getTaskInternal({
 				id: keys.id,
 				namespace: keys.namespace
@@ -527,7 +556,7 @@ class Hooks {
 		const task = await this.getTaskInternal(
 			args.fork
 				? {
-						id: await this.uuidFromString(args.id),
+						id: await this.ulidFromString(args.id),
 						namespace: `${args.namespace}#FORK`
 					}
 				: {
@@ -681,7 +710,7 @@ class Hooks {
 			let id = args.id;
 
 			if (args.fork) {
-				id = await this.uuidFromString(args.id);
+				id = await this.ulidFromString(args.id);
 			}
 
 			queryOptions.attributeNames = {
@@ -805,7 +834,7 @@ class Hooks {
 		const res = await this.db.tasks.get({
 			item: args.fork
 				? {
-						id: await this.uuidFromString(args.id),
+						id: await this.ulidFromString(args.id),
 						namespace: `${args.namespace}#FORK`
 					}
 				: {
@@ -1011,7 +1040,7 @@ class Hooks {
 			throw new TaskException('Task must be a primary task');
 		}
 
-		const id = await this.uuidFromString(args.forkId);
+		const id = await this.ulidFromString(args.forkId);
 		const namespace = `${args.primaryTask.primaryNamespace}#FORK`;
 		const currentFork = !args.overwrite ? await this.getTaskInternal({ id, namespace }) : null;
 
@@ -1062,7 +1091,7 @@ class Hooks {
 	async registerTask(input: Hooks.RegisterTask): Promise<Hooks.Task> {
 		const args = await schema.registerTask.parseAsync(input);
 		const scheduledDate = args.scheduledDate ? new Date(args.scheduledDate).toISOString() : '-';
-		const id = args.id || this.uuid();
+		const id = args.id || ulid();
 		const { overwrite, ...task } = args;
 
 		return this.db.tasks.put(
@@ -1102,7 +1131,7 @@ class Hooks {
 		const task = await this.getTaskInternal(
 			args.fork
 				? {
-						id: await this.uuidFromString(args.id),
+						id: await this.ulidFromString(args.id),
 						namespace: `${args.namespace}#FORK`
 					}
 				: {
@@ -1618,7 +1647,7 @@ class Hooks {
 		const task = await this.getTaskInternal(
 			args.fork
 				? {
-						id: await this.uuidFromString(args.id),
+						id: await this.ulidFromString(args.id),
 						namespace: `${args.namespace}#FORK`
 					}
 				: {
@@ -1704,33 +1733,36 @@ class Hooks {
 		return taskShape(res);
 	}
 
-	private uuid(): string {
-		return crypto.randomUUID();
-	}
-
-	async uuidFromString(input: string): Promise<string> {
+	async ulidFromString(input: string): Promise<string> {
+		// Create a deterministic hash from the input string
 		const encoder = new TextEncoder();
 		const data = encoder.encode(input);
-
 		const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-		const hashArray = Array.from(new Uint8Array(hashBuffer));
-		const hashHex = hashArray
-			.map(b => {
-				return b.toString(16).padStart(2, '0');
-			})
-			.join('');
-		const uuidBytes = hashHex.slice(0, 32);
+		const hashArray = new Uint8Array(hashBuffer);
 
-		// Format to 8-4-4-4-12
-		const segments = [
-			uuidBytes.slice(0, 8),
-			uuidBytes.slice(8, 12),
-			'4' + uuidBytes.slice(13, 16),
-			((parseInt(uuidBytes[16], 16) & 0x3) | 0x8).toString(16) + uuidBytes.slice(17, 20),
-			uuidBytes.slice(20, 32)
-		];
+		// Extract first 6 bytes to use as timestamp
+		const timestampBytes = hashArray.slice(0, 6);
 
-		return segments.join('-');
+		// Convert bytes to a timestamp value (48 bits)
+		let timestampValue = 0;
+		for (let i = 0; i < 6; i++) {
+			timestampValue = timestampValue * 256 + timestampBytes[i];
+		}
+
+		// Make sure timestamp is within valid range
+		timestampValue = timestampValue % 281474976710656; // 2^48
+
+		// Generate time component using encodeTime
+		const timeComponent = encodeTime(timestampValue);
+
+		// Extract remaining 10 bytes for randomness (need 80 bits)
+		const randomBytes = hashArray.slice(6, 16);
+
+		// Use crockfordEncode to encode the random bytes
+		const randomComponent = crockfordEncode(randomBytes).slice(0, 16);
+
+		// Combine time and random components
+		return timeComponent + randomComponent;
 	}
 }
 

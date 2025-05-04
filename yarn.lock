@@ -1824,10 +1824,10 @@ use-async-helpers@^1.0.31:
   resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.31.tgz#cc9673eead6b4509f361a63887fe0bf15471ec86"
   integrity sha512-sbw+jBC82bzQ6JLCiE8g9Er6eodeepxg8Q1YSrs3MhO8oT7xMV9Rqh1RzrxM2Xy331MX09zAmWwg4WRZQBTkNw==
 
-use-dynamodb-webhooks@^1.0.24:
-  version "1.0.24"
-  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.24.tgz#ad65624a3618e733c7ea515c9212d246ef92e115"
-  integrity sha512-NNb10M35R0xxwrdtvZkTQeOKF86bJaAANjyHr1/872rMAAdwYSAdZ242E82YciQGCOx84xIHVvXkFxNnj1tJlQ==
+use-dynamodb-webhooks@^1.0.25:
+  version "1.0.25"
+  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.25.tgz#1a00351d83267106442f135d9e95c5b4fb223003"
+  integrity sha512-mNz1bzouVXYLK4+uMfymrVfVM9rQe//KDhXFeb68GQtgOCWIEwDc3VcLtuQDrIL5vLPcayQlw1IWG4U/Nmw69w==
   dependencies:
     lodash "^4.17.21"
     ulid "^3.0.0"

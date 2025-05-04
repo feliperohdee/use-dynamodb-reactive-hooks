@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { isValid } from 'ulid';
 import FilterCriteria from 'use-filter-criteria';
 import z from 'zod';
 
@@ -173,7 +174,7 @@ describe('/index.ts', () => {
 					date: new Date(),
 					task: {
 						...task,
-						id: await hooks.uuidFromString('inexistent-id')
+						id: await hooks.ulidFromString('inexistent-id')
 					}
 				});
 
@@ -818,7 +819,7 @@ describe('/index.ts', () => {
 				forkOnly: false,
 				keys: [
 					{
-						id: await hooks.uuidFromString('inexistent-id'),
+						id: await hooks.ulidFromString('inexistent-id'),
 						namespace: 'spec'
 					}
 				],
@@ -831,7 +832,7 @@ describe('/index.ts', () => {
 
 			// @ts-expect-error
 			expect(hooks.getTaskInternal).toHaveBeenCalledWith({
-				id: await hooks.uuidFromString('inexistent-id'),
+				id: await hooks.ulidFromString('inexistent-id'),
 				namespace: 'spec'
 			});
 			// @ts-expect-error
@@ -1295,7 +1296,7 @@ describe('/index.ts', () => {
 						__updatedAt: expect.any(String),
 						firstExecutionDate: expect.any(String),
 						forkId: 'fork-id',
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						lastExecutionDate: expect.any(String),
 						lastExecutionType: 'EVENT',
 						lastResponseBody: expect.any(String),
@@ -2269,7 +2270,7 @@ describe('/index.ts', () => {
 			try {
 				await hooks.debugCondition({
 					conditionData: { key: 'value' },
-					id: await hooks.uuidFromString('inexistent-id'),
+					id: await hooks.ulidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -2315,7 +2316,7 @@ describe('/index.ts', () => {
 		it('should throw if task is not found', async () => {
 			try {
 				await hooks.deleteTask({
-					id: await hooks.uuidFromString('inexistent-id'),
+					id: await hooks.ulidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -2373,15 +2374,15 @@ describe('/index.ts', () => {
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK'
 					}
 				]),
@@ -2426,15 +2427,15 @@ describe('/index.ts', () => {
 				count: 3,
 				items: expect.arrayContaining([
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK'
 					}
 				]),
@@ -2489,15 +2490,15 @@ describe('/index.ts', () => {
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK'
 					}
 				]),
@@ -2512,7 +2513,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
 				item: {
-					id: await hooks.uuidFromString('fork-id'),
+					id: await hooks.ulidFromString('fork-id'),
 					namespace: 'spec#SUBTASK'
 				},
 				limit: Infinity,
@@ -2521,9 +2522,9 @@ describe('/index.ts', () => {
 			});
 
 			expect(hooks.db.tasks.batchDelete).toHaveBeenCalledWith([
-				{ id: await hooks.uuidFromString('fork-id'), namespace: 'spec#FORK' },
-				{ id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`), namespace: 'spec#SUBTASK' },
-				{ id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`, namespace: 'spec#SUBTASK' }
+				{ id: await hooks.ulidFromString('fork-id'), namespace: 'spec#FORK' },
+				{ id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`), namespace: 'spec#SUBTASK' },
+				{ id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`, namespace: 'spec#SUBTASK' }
 			]);
 
 			retrieved = await hooks.db.tasks.scan({
@@ -3294,7 +3295,7 @@ describe('/index.ts', () => {
 
 		it('should fetch by [namespace, id] and primaryIdPrefix = true', async () => {
 			const res = await hooks.fetchTasksByPrimaryTask({
-				primaryId: tasks[0].id.slice(0, 3),
+				primaryId: tasks[0].id,
 				primaryIdPrefix: true,
 				primaryNamespace: 'spec'
 			});
@@ -3309,7 +3310,7 @@ describe('/index.ts', () => {
 				},
 				filterExpression: '#type = :primary OR #type = :fork',
 				item: {
-					primaryId: tasks[0].id.slice(0, 3),
+					primaryId: tasks[0].id,
 					primaryNamespace: 'spec'
 				},
 				limit: 100,
@@ -3404,7 +3405,7 @@ describe('/index.ts', () => {
 				// @ts-expect-error
 				await hooks.getSubTaskParent({
 					...subTasks[0],
-					id: await hooks.uuidFromString('inexistent-id')
+					id: await hooks.ulidFromString('inexistent-id')
 				});
 
 				throw new Error('Expected to throw');
@@ -3460,7 +3461,7 @@ describe('/index.ts', () => {
 		it('should throw if task is not found', async () => {
 			try {
 				await hooks.getTask({
-					id: await hooks.uuidFromString('inexistent-id'),
+					id: await hooks.ulidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -4823,7 +4824,7 @@ describe('/index.ts', () => {
 					firstExecutionDate: '',
 					firstScheduledDate: expect.any(String),
 					forkId: 'fork-id',
-					id: await hooks.uuidFromString('fork-id'),
+					id: await hooks.ulidFromString('fork-id'),
 					lastError: '',
 					lastErrorDate: '',
 					lastErrorExecutionType: '',
@@ -4886,7 +4887,7 @@ describe('/index.ts', () => {
 				firstExecutionDate: '',
 				firstScheduledDate: `${currentYear + 1}-01-12T00:00:00.000Z`,
 				forkId: 'fork-id',
-				id: await hooks.uuidFromString('fork-id'),
+				id: await hooks.ulidFromString('fork-id'),
 				lastError: '',
 				lastErrorDate: '',
 				lastErrorExecutionType: '',
@@ -4942,7 +4943,7 @@ describe('/index.ts', () => {
 				overwrite: true
 			});
 
-			expect(res.id).toEqual(await hooks.uuidFromString('fork-id'));
+			expect(res.id).toEqual(await hooks.ulidFromString('fork-id'));
 		});
 
 		it('should return fork task if it already exists', async () => {
@@ -5374,7 +5375,7 @@ describe('/index.ts', () => {
 			try {
 				await hooks.setTaskActive({
 					active: false,
-					id: await hooks.uuidFromString('inexistent-id'),
+					id: await hooks.ulidFromString('inexistent-id'),
 					namespace: 'spec'
 				});
 
@@ -5447,17 +5448,17 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					}
@@ -5543,17 +5544,17 @@ describe('/index.ts', () => {
 						status: 'DISABLED'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					}
@@ -5627,17 +5628,17 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'ACTIVE'
 					},
 					{
-						id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+						id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					},
 					{
-						id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+						id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 						namespace: 'spec#SUBTASK',
 						status: 'ACTIVE'
 					}
@@ -5654,7 +5655,7 @@ describe('/index.ts', () => {
 
 			expect(hooks.db.tasks.query).toHaveBeenCalledWith({
 				item: {
-					id: await hooks.uuidFromString('fork-id'),
+					id: await hooks.ulidFromString('fork-id'),
 					namespace: 'spec#SUBTASK'
 				},
 				limit: Infinity,
@@ -5677,7 +5678,7 @@ describe('/index.ts', () => {
 								':updatedAt': expect.any(String)
 							},
 							Key: {
-								id: await hooks.uuidFromString('fork-id'),
+								id: await hooks.ulidFromString('fork-id'),
 								namespace: 'spec#FORK'
 							},
 							TableName: hooks.db.tasks.table,
@@ -5687,7 +5688,7 @@ describe('/index.ts', () => {
 					{
 						Delete: {
 							Key: {
-								id: expect.stringMatching(`${await hooks.uuidFromString('fork-id')}#DELAY#[0-9]+`),
+								id: expect.stringMatching(`${await hooks.ulidFromString('fork-id')}#DELAY#[0-9]+`),
 								namespace: 'spec#SUBTASK'
 							},
 							TableName: hooks.db.tasks.table
@@ -5696,7 +5697,7 @@ describe('/index.ts', () => {
 					{
 						Delete: {
 							Key: {
-								id: `${await hooks.uuidFromString('fork-id')}#DELAY-DEBOUNCE`,
+								id: `${await hooks.ulidFromString('fork-id')}#DELAY-DEBOUNCE`,
 								namespace: 'spec#SUBTASK'
 							},
 							TableName: hooks.db.tasks.table
@@ -5737,7 +5738,7 @@ describe('/index.ts', () => {
 						status: 'ACTIVE'
 					},
 					{
-						id: await hooks.uuidFromString('fork-id'),
+						id: await hooks.ulidFromString('fork-id'),
 						namespace: 'spec#FORK',
 						status: 'DISABLED'
 					}
@@ -7381,14 +7382,14 @@ describe('/index.ts', () => {
 
 			it('should works by id', async () => {
 				const res = await hooks.trigger({
-					id: await hooks.uuidFromString('id'),
+					id: await hooks.ulidFromString('id'),
 					namespace: 'spec'
 				});
 
 				// @ts-expect-error
 				expect(hooks.queryActiveTasks).toHaveBeenCalledWith({
 					date: expect.any(Date),
-					id: await hooks.uuidFromString('id'),
+					id: await hooks.ulidFromString('id'),
 					namespace: 'spec',
 					onChunk: expect.any(Function)
 				});
@@ -7812,24 +7813,18 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('uuid', () => {
-		it('should generate a UUID', () => {
-			// @ts-expect-error
-			const uuid = hooks.uuid();
+	describe('ulidFromString', () => {
+		it('should generate a ULID from a string', async () => {
+			const ulid = await hooks.ulidFromString('test');
+			const ulid2 = await hooks.ulidFromString('test');
+			const ulid3 = await hooks.ulidFromString('test-2');
 
-			expect(uuid).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
-		});
-	});
+			expect(ulid).toEqual(ulid2);
+			expect(ulid2).not.toEqual(ulid3);
 
-	describe('uuidFromString', () => {
-		it('should generate a UUID from a string', async () => {
-			const uuid = await hooks.uuidFromString('test');
-			const uuid2 = await hooks.uuidFromString('test');
-			const uuid3 = await hooks.uuidFromString('test-2');
-
-			expect(uuid).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
-			expect(uuid).toEqual(uuid2);
-			expect(uuid2).not.toEqual(uuid3);
+			expect(isValid(ulid)).toBe(true);
+			expect(isValid(ulid2)).toBe(true);
+			expect(isValid(ulid3)).toBe(true);
 		});
 	});
 });
