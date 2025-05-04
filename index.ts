@@ -30,7 +30,7 @@ namespace Hooks {
 		secretAccessKey: string;
 		tasksTableName: string;
 		webhookCaller?: (input: Hooks.CallWebhookInput) => Promise<Hooks.Task[]>;
-		webhookChunkSize?: number;
+		webhookChunkLimit?: number;
 	};
 
 	export type CallWebhookInput = z.input<typeof schema.callWebhookInput>;
@@ -83,7 +83,7 @@ class Hooks {
 	public maxErrors: number;
 	public promiseQueue: PromiseQueue;
 	public rules: Map<string, Hooks.TaskRule>;
-	public webhookChunkSize: number;
+	public webhookChunkLimit: number;
 	public webhooks: Webhooks;
 
 	constructor(options: Hooks.ConstructorOptions) {
@@ -179,9 +179,11 @@ class Hooks {
 		this.db = { tasks };
 		this.filterCriteria = options.filterCriteria || new FilterCriteria();
 		this.maxErrors = options.maxErrors || 5;
-		this.promiseQueue = new PromiseQueue(Math.max(10, options.maxConcurrency || DEFAULT_MAX_CONCURRENCY));
+		this.promiseQueue = new PromiseQueue({
+			concurrency: Math.max(10, options.maxConcurrency || DEFAULT_MAX_CONCURRENCY)
+		});
 		this.rules = new Map();
-		this.webhookChunkSize = options.webhookChunkSize || 0;
+		this.webhookChunkLimit = _.clamp(options.webhookChunkLimit ?? 100, 1, 200);
 		this.webhooks = webhooks;
 	}
 
@@ -849,7 +851,7 @@ class Hooks {
 				':now': args.date.toISOString(),
 				':zero': 0
 			},
-			chunkLimit: 100,
+			chunkLimit: this.webhookChunkLimit,
 			filterExpression: [
 				'#pid = :empty',
 				'(#repeatMax = :zero OR #totalExecutions < #repeatMax)',
@@ -1551,40 +1553,12 @@ class Hooks {
 							ruleId: args.ruleId || null
 						};
 
-						if (this.webhookChunkSize > 0) {
-							// Process in chunks if webhookChunkSize is set
-							let promiseTasks: (() => Promise<void>)[] = [];
-
-							for (const chunk of _.chunk(items, this.webhookChunkSize)) {
-								const promiseTask = async () => {
-									if (this.customWebhookCall) {
-										const res = await this.customWebhookCall({
-											...callWebhookInput,
-											keys: chunk
-										});
-										result.processed += _.size(res);
-									} else {
-										const res = await this.callWebhook({
-											...callWebhookInput,
-											keys: chunk
-										});
-										result.processed += _.size(res);
-									}
-								};
-
-								promiseTasks = [...promiseTasks, promiseTask];
-							}
-
-							await promiseAllSettled(promiseTasks, this.promiseQueue);
+						if (this.customWebhookCall) {
+							const res = await this.customWebhookCall(callWebhookInput);
+							result.processed += _.size(res);
 						} else {
-							// Original behavior - process all items at once
-							if (this.customWebhookCall) {
-								const res = await this.customWebhookCall(callWebhookInput);
-								result.processed += _.size(res);
-							} else {
-								const res = await this.callWebhook(callWebhookInput);
-								result.processed += _.size(res);
-							}
+							const res = await this.callWebhook(callWebhookInput);
+							result.processed += _.size(res);
 						}
 					}
 				});
@@ -1620,40 +1594,13 @@ class Hooks {
 						ruleId: null
 					};
 
-					if (this.webhookChunkSize > 0) {
-						let promiseTasks: (() => Promise<void>)[] = [];
-
-						// Process in chunks if webhookChunkSize is set
-						for (const chunk of _.chunk(items, this.webhookChunkSize)) {
-							const promiseTask = async () => {
-								if (this.customWebhookCall) {
-									const res = await this.customWebhookCall({
-										...callWebhookInput,
-										keys: chunk
-									});
-									result.processed += _.size(res);
-								} else {
-									const res = await this.callWebhook({
-										...callWebhookInput,
-										keys: chunk
-									});
-									result.processed += _.size(res);
-								}
-							};
-
-							promiseTasks = [...promiseTasks, promiseTask];
-						}
-
-						await promiseAllSettled(promiseTasks, this.promiseQueue);
+					// Original behavior - process all items at once
+					if (this.customWebhookCall) {
+						const res = await this.customWebhookCall(callWebhookInput);
+						result.processed += _.size(res);
 					} else {
-						// Original behavior - process all items at once
-						if (this.customWebhookCall) {
-							const res = await this.customWebhookCall(callWebhookInput);
-							result.processed += _.size(res);
-						} else {
-							const res = await this.callWebhook(callWebhookInput);
-							result.processed += _.size(res);
-						}
+						const res = await this.callWebhook(callWebhookInput);
+						result.processed += _.size(res);
 					}
 				}
 			});
