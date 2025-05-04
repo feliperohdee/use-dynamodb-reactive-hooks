@@ -1819,11 +1819,6 @@ undici-types@~6.20.0:
   resolved "https://registry.yarnpkg.com/undici-types/-/undici-types-6.20.0.tgz#8171bf22c1f588d1554d55bf204bc624af388433"
   integrity sha512-Ny6QZ2Nju20vw1SRHe3d9jVu6gJ+4e3+MMpqu7pqE5HT6WsTSlce++GQmK5UXS8mzV8DSYHrQH+Xrf2jVcuKNg==
 
-use-async-helpers@^1.0.29:
-  version "1.0.29"
-  resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.29.tgz#322f613e35f91649451360cd662cc2cc450cdf0d"
-  integrity sha512-XRr+ZfiOkSHW1QDgs+UGcTX2n1BgzrhKztcak5+276gOEE3cMM9dxX2oApgG129I3Sjz9wyDPKtwaiwqANJh+A==
-
 use-async-helpers@^1.0.31:
   version "1.0.31"
   resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.31.tgz#cc9673eead6b4509f361a63887fe0bf15471ec86"
@@ -1851,13 +1846,13 @@ use-dynamodb@^1.0.64:
     "@aws-sdk/lib-dynamodb" "^3.799.0"
     lodash "^4.17.21"
 
-use-filter-criteria@^1.0.70:
-  version "1.0.70"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.70.tgz#f210499bddbe04edf8d8a500520b7af2e32b3958"
-  integrity sha512-lfI6g8ke3Ya8m7OjLxyKVPG7fsJ2NG0ZMYhwAFArS+MRK9e3BxfhDRyGr2wJMqOf6Hlsb+T0lat7WJ11uDkuyg==
+use-filter-criteria@^1.0.72:
+  version "1.0.72"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.72.tgz#7c964edf0861e4bba2636899373690e94a870f2c"
+  integrity sha512-oDWF+8F+ZPYqU9Gnj/EYqd+WKS9N76smUupko3dJuGD3j6ATOD++q3fD1yBIvaqX/tzw3aA4fXDGiqrRB8ZL6g==
   dependencies:
     lodash "^4.17.21"
-    use-async-helpers "^1.0.29"
+    use-async-helpers "^1.0.31"
     use-zod-default "^1.0.10"
     zod "^3.24.1"
 
