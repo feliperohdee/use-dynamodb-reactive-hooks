@@ -1824,23 +1824,23 @@ use-async-helpers@^1.0.31:
   resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.31.tgz#cc9673eead6b4509f361a63887fe0bf15471ec86"
   integrity sha512-sbw+jBC82bzQ6JLCiE8g9Er6eodeepxg8Q1YSrs3MhO8oT7xMV9Rqh1RzrxM2Xy331MX09zAmWwg4WRZQBTkNw==
 
-use-dynamodb-webhooks@^1.0.25:
-  version "1.0.25"
-  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.25.tgz#1a00351d83267106442f135d9e95c5b4fb223003"
-  integrity sha512-mNz1bzouVXYLK4+uMfymrVfVM9rQe//KDhXFeb68GQtgOCWIEwDc3VcLtuQDrIL5vLPcayQlw1IWG4U/Nmw69w==
+use-dynamodb-webhooks@^1.0.27:
+  version "1.0.27"
+  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.27.tgz#3568ab618cde1b556f2ec36b8c36e8c836ba3b1e"
+  integrity sha512-cneHK1SLAEw517kGNFRo4UqxaAga2i1C25R5PEsg57WSSCeI/3R/qZxKoieklQVUSH119yEWYI1EmUKUBtykTA==
   dependencies:
     lodash "^4.17.21"
     ulid "^3.0.0"
-    use-dynamodb "^1.0.64"
+    use-dynamodb "^1.0.66"
     use-http-error "^1.0.6"
     use-qs "^1.0.4"
     use-zod-default "^1.0.10"
     zod "^3.24.1"
 
-use-dynamodb@^1.0.64:
-  version "1.0.64"
-  resolved "https://registry.yarnpkg.com/use-dynamodb/-/use-dynamodb-1.0.64.tgz#aeec0aa88be3e4898972c062969a0f7e77ca8b60"
-  integrity sha512-RJOBrF1QvfDKEt6WAlZy9L3rjE+9gW/6pybJPMau8yCe4np1TfC7qnqsZxMxQmyOmTu339BJnocvuVtZj8SAdg==
+use-dynamodb@^1.0.66:
+  version "1.0.66"
+  resolved "https://registry.yarnpkg.com/use-dynamodb/-/use-dynamodb-1.0.66.tgz#9abdc26c8d1e26b787c0be6ab6cc686507787f05"
+  integrity sha512-l/5qPL559brCqE+o06WXTlHvXuLWnE0A4Vo5VZXHJOdJN0WKLo4F+5pIaYmVJwzaDgeNIRgadUl2/z1YB2hgxg==
   dependencies:
     "@aws-sdk/client-dynamodb" "^3.799.0"
     "@aws-sdk/lib-dynamodb" "^3.799.0"
