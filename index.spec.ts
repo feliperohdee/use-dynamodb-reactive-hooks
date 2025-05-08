@@ -5,6 +5,7 @@ import { isValid } from 'ulid';
 import FilterCriteria from 'use-filter-criteria';
 import z from 'zod';
 
+import { ENDPOINT } from './constants';
 import Hooks, { SUBTASK_TTL_IN_MS, TaskException, taskShape } from './index';
 
 // @ts-expect-error
@@ -65,6 +66,7 @@ describe('/index.ts', () => {
 		hooks = new Hooks({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			createTable: true,
+			endpoint: ENDPOINT,
 			logsTableName: 'use-dynamodb-reactive-hooks-logs-spec',
 			region: process.env.AWS_REGION || '',
 			secretAccessKey: process.env.AWS_SECRET_KEY || '',
@@ -76,6 +78,7 @@ describe('/index.ts', () => {
 		hooks = new Hooks({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			createTable: true,
+			endpoint: ENDPOINT,
 			logsTableName: 'use-dynamodb-reactive-hooks-logs-spec',
 			region: process.env.AWS_REGION || '',
 			secretAccessKey: process.env.AWS_SECRET_KEY || '',

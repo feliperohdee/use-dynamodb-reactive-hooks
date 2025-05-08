@@ -50,6 +50,7 @@ namespace Hooks {
 	export type ConstructorOptions = {
 		accessKeyId: string;
 		createTable?: boolean;
+		endpoint?: string;
 		filterCriteria?: FilterCriteria;
 		logsTableName: string;
 		logsTtlInSeconds?: number;
@@ -118,6 +119,7 @@ class Hooks {
 	constructor(options: Hooks.ConstructorOptions) {
 		const tasks = new Dynamodb<Hooks.Task>({
 			accessKeyId: options.accessKeyId,
+			endpoint: options.endpoint,
 			indexes: [
 				// used to fetch tasks by namespace / eventPattern
 				{
@@ -191,6 +193,7 @@ class Hooks {
 
 		const webhooks = new Webhooks({
 			accessKeyId: options.accessKeyId,
+			endpoint: options.endpoint,
 			createTable: options.createTable,
 			region: options.region,
 			secretAccessKey: options.secretAccessKey,
