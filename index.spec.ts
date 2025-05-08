@@ -1833,7 +1833,7 @@ describe('/index.ts', () => {
 				});
 
 				rule2 = vi.fn(async () => {
-					return _.times(5, i => {
+					return _.times(5, () => {
 						return {
 							requestBody: null,
 							requestHeaders: null,
