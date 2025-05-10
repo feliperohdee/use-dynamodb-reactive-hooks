@@ -6,7 +6,7 @@
 		"use-async-helpers": "^1.0.31",
 		"use-dynamodb": "^1.0.67",
 		"use-dynamodb-webhooks": "^1.0.28",
-		"use-filter-criteria": "^1.0.73",
+		"use-filter-criteria": "^1.0.75",
 		"use-http-error": "^1.0.6",
 		"use-zod-default": "^1.0.10",
 		"zod": "^3.24.2"
@@ -34,11 +34,11 @@
 		"build": "rm -rf dist && tsc -p tsconfig.json",
 		"dev:dynamodb": "java -jar /Users/feliperohde/Documents/dynamodb-local/DynamoDBLocal.jar -dbPath ./dynamodb-local -sharedDb",
 		"lint": "prettier --write . && eslint --fix . && tsc -p tsconfig.json",
-		"npm-publish": "yarn test --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
-		"npm-publish-only": "yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
+		"npm-publish": "yarn lint && yarn test --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
+		"npm-publish-only": "yarn lint && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
 		"test": "./.test.sh",
 		"test:basic": "./.test.sh --reporter=basic",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.42"
+	"version": "1.0.43"
 }
