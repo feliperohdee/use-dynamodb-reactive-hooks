@@ -6,7 +6,7 @@
 		"use-async-helpers": "^1.0.31",
 		"use-dynamodb": "^1.0.69",
 		"use-dynamodb-webhooks": "^1.0.29",
-		"use-filter-criteria": "^1.0.76",
+		"use-filter-criteria": "^1.0.77",
 		"use-http-error": "^1.0.6",
 		"use-zod-default": "^1.0.10",
 		"zod": "^3.24.2"
@@ -40,5 +40,5 @@
 		"test:basic": "./.test.sh --reporter=basic",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.45"
+	"version": "1.0.46"
 }

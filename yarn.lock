@@ -3040,10 +3040,10 @@ use-dynamodb@^1.0.69:
     "@aws-sdk/lib-dynamodb" "^3.799.0"
     lodash "^4.17.21"
 
-use-filter-criteria@^1.0.76:
-  version "1.0.76"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.76.tgz#fe497681de1b826b5747a0c44b6194e19466c4ca"
-  integrity sha512-JgJ9ldwInffMHVIX1M118ESB59wkA7iKFB3pyyqDA33T+E6b1WBdJvx8ouMgfVFjifuTOT9aq+hzit57e/vIsw==
+use-filter-criteria@^1.0.77:
+  version "1.0.77"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.77.tgz#2e8ae4bd2f76ebcab0ad534e41becadcd863ae99"
+  integrity sha512-JM1wM1BbI7MF+QG2H6cMgh1MWY+GRYdX3tLcGtGNX+3eak+F1SlJqMMtUG74f4qpOiRT/saukWkT1se7Cw4iEA==
   dependencies:
     eslint "^9.26.0"
     lodash "^4.17.21"
