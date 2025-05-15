@@ -345,6 +345,8 @@ class Hooks {
 						task = await this.setTaskLock({ pid, task });
 					}
 
+					const defaultWebhookLogPrefix = _.compact([task.primaryId, task.forkId]).join('#');
+
 					// handle rules
 					if (args.ruleId || task!.ruleId) {
 						const rules = await this.executeRule(args.ruleId || task!.ruleId, {
@@ -359,6 +361,7 @@ class Hooks {
 							rules,
 							rule => {
 								return this.webhooks.trigger({
+									logPrefix: task!.webhookLogPrefix || defaultWebhookLogPrefix,
 									metadata: {
 										executionType: args.executionType,
 										forkId: task!.forkId,
@@ -416,6 +419,7 @@ class Hooks {
 						});
 					} else {
 						const log = await this.webhooks.trigger({
+							logPrefix: task.webhookLogPrefix || defaultWebhookLogPrefix,
 							metadata: {
 								executionType: args.executionType,
 								forkId: task.forkId,
@@ -1019,7 +1023,8 @@ class Hooks {
 			scheduledDate,
 			status: 'ACTIVE',
 			ttl: Math.floor((new Date(scheduledDate).getTime() + SUBTASK_TTL_IN_MS) / 1000),
-			type: 'SUBTASK'
+			type: 'SUBTASK',
+			webhookLogPrefix: args.webhookLogPrefix
 		});
 
 		if (currentTask) {
@@ -1081,7 +1086,8 @@ class Hooks {
 				ruleId: args.primaryTask.ruleId,
 				scheduledDate: args.primaryTask.scheduledDate,
 				status: 'ACTIVE',
-				type: 'FORK'
+				type: 'FORK',
+				webhookLogPrefix: args.primaryTask.webhookLogPrefix
 			}),
 			{ overwrite: args.overwrite }
 		);

@@ -409,6 +409,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				logPrefix: task.id,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -462,6 +463,48 @@ describe('/index.ts', () => {
 			]);
 		});
 
+		it('should works with task.webhookLogPrefix', async () => {
+			task = await hooks.registerTask(
+				createTestTask(0, {
+					webhookLogPrefix: 'webhook-log-prefix'
+				})
+			);
+
+			await hooks.callWebhook({
+				conditionData: null,
+				date: new Date(),
+				eventDelayDebounce: null,
+				eventDelayUnit: null,
+				eventDelayValue: null,
+				executionType: 'EVENT',
+				forkId: null,
+				forkOnly: false,
+				keys: [{ id: task.id, namespace: 'spec' }],
+				requestBody: null,
+				requestHeaders: null,
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything',
+				ruleId: null
+			});
+
+			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				logPrefix: 'webhook-log-prefix',
+				metadata: {
+					executionType: 'EVENT',
+					forkId: '',
+					ruleId: '',
+					taskId: task.id,
+					taskType: 'PRIMARY'
+				},
+				namespace: 'spec',
+				requestBody: { a: 1 },
+				requestHeaders: { a: '1' },
+				requestMethod: 'POST',
+				requestUrl: 'https://httpbin.org/anything',
+				retryLimit: 3
+			});
+		});
+
 		it('should works with fork', async () => {
 			const res = await hooks.callWebhook({
 				conditionData: null,
@@ -499,6 +542,7 @@ describe('/index.ts', () => {
 				task: forkTask
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				logPrefix: `${task.id}#fork-id`,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: 'fork-id',
@@ -600,6 +644,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				logPrefix: task.id,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -765,6 +810,7 @@ describe('/index.ts', () => {
 			// @ts-expect-error
 			expect(hooks.setTaskLock).not.toHaveBeenCalled();
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				logPrefix: task.id,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -972,6 +1018,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+				logPrefix: task.id,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -1105,6 +1152,7 @@ describe('/index.ts', () => {
 					}
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: `${task.id}#fork-id`,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: 'fork-id',
@@ -1255,6 +1303,7 @@ describe('/index.ts', () => {
 					}
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: `${task.id}#fork-id`,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: 'fork-id',
@@ -1666,6 +1715,7 @@ describe('/index.ts', () => {
 					task
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: task.id,
 					metadata: {
 						executionType: 'SCHEDULED',
 						forkId: '',
@@ -1756,6 +1806,7 @@ describe('/index.ts', () => {
 					task: forkTask
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: `${task.id}#fork-id`,
 					metadata: {
 						executionType: 'SCHEDULED',
 						forkId: 'fork-id',
@@ -1885,6 +1936,7 @@ describe('/index.ts', () => {
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: task.id,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: '',
@@ -1941,6 +1993,49 @@ describe('/index.ts', () => {
 						totalSuccessfulExecutions: 1
 					}
 				]);
+			});
+
+			it('should execute with task.webhookLogPrefix', async () => {
+				task = await hooks.registerTask(
+					createTestTask(0, {
+						webhookLogPrefix: 'webhook-log-prefix'
+					})
+				);
+
+				await hooks.callWebhook({
+					conditionData: null,
+					date: new Date(),
+					eventDelayDebounce: null,
+					eventDelayUnit: null,
+					eventDelayValue: null,
+					executionType: 'EVENT',
+					forkId: null,
+					forkOnly: false,
+					keys: [{ id: task.id, namespace: 'spec' }],
+					requestBody: null,
+					requestHeaders: null,
+					requestMethod: 'POST',
+					requestUrl: 'https://httpbin.org/anything',
+					ruleId: 'rule-id-1'
+				});
+
+				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
+				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: 'webhook-log-prefix',
+					metadata: {
+						executionType: 'EVENT',
+						forkId: '',
+						ruleId: 'rule-id-1',
+						taskId: task.id,
+						taskType: 'PRIMARY'
+					},
+					namespace: 'spec',
+					requestBody: { a: 4 },
+					requestHeaders: { a: 'a-4' },
+					requestMethod: 'GET',
+					requestUrl: 'https://httpbin.org/rule',
+					retryLimit: 3
+				});
 			});
 
 			it('should execute with task.ruleId', async () => {
@@ -2000,6 +2095,7 @@ describe('/index.ts', () => {
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
+					logPrefix: task.id,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: '',
@@ -4189,7 +4285,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: expect.any(Number),
-					type: 'SUBTASK'
+					type: 'SUBTASK',
+					webhookLogPrefix: ''
 				});
 			});
 
@@ -4276,7 +4373,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: expect.any(Number),
-					type: 'SUBTASK'
+					type: 'SUBTASK',
+					webhookLogPrefix: ''
 				});
 			});
 
@@ -4437,7 +4535,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: expect.any(Number),
-					type: 'SUBTASK'
+					type: 'SUBTASK',
+					webhookLogPrefix: ''
 				});
 			});
 
@@ -4524,7 +4623,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: expect.any(Number),
-					type: 'SUBTASK'
+					type: 'SUBTASK',
+					webhookLogPrefix: ''
 				});
 			});
 		});
@@ -4633,8 +4733,22 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: expect.any(Number),
-					type: 'SUBTASK'
+					type: 'SUBTASK',
+					webhookLogPrefix: ''
 				});
+			});
+
+			it('should update with webhookLogPrefix', async () => {
+				// @ts-expect-error
+				const res = await hooks.registerDelayedSubTask({
+					...task,
+					eventDelayDebounce: true,
+					eventDelayUnit: 'minutes',
+					eventDelayValue: 1,
+					webhookLogPrefix: 'webhook-log-prefix'
+				});
+
+				expect(res.webhookLogPrefix).toEqual('webhook-log-prefix');
 			});
 
 			it('should update by fork', async () => {
@@ -4720,7 +4834,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: expect.any(Number),
-					type: 'SUBTASK'
+					type: 'SUBTASK',
+					webhookLogPrefix: ''
 				});
 			});
 		});
@@ -4861,7 +4976,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 0,
 					ttl: 0,
-					type: 'FORK'
+					type: 'FORK',
+					webhookLogPrefix: ''
 				},
 				{
 					overwrite: false
@@ -4924,8 +5040,22 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				ttl: 0,
-				type: 'FORK'
+				type: 'FORK',
+				webhookLogPrefix: ''
 			});
+		});
+
+		it('should create fork with webhookLogPrefix', async () => {
+			// @ts-expect-error
+			const res = await hooks.registerForkTask({
+				forkId: 'fork-id',
+				primaryTask: {
+					...task,
+					webhookLogPrefix: 'webhook-log-prefix'
+				}
+			});
+
+			expect(res.webhookLogPrefix).toEqual('webhook-log-prefix');
 		});
 
 		it('should overwrite', async () => {
@@ -5162,7 +5292,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				type: 'PRIMARY',
-				ttl: 0
+				ttl: 0,
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -5222,8 +5353,20 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				type: 'PRIMARY',
-				ttl: 0
+				ttl: 0,
+				webhookLogPrefix: ''
 			});
+		});
+
+		it('should create task with webhookLogPrefix', async () => {
+			const res = await hooks.registerTask({
+				id: 'abc#12345678-1234-1234-1234-123456789012',
+				namespace: 'spec',
+				requestUrl: 'https://httpbin.org/anything',
+				webhookLogPrefix: 'webhook-log-prefix'
+			});
+
+			expect(res.webhookLogPrefix).toEqual('webhook-log-prefix');
 		});
 
 		it('should overwrite', async () => {
@@ -5289,7 +5432,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				type: 'PRIMARY',
-				ttl: 0
+				ttl: 0,
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -5354,7 +5498,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				type: 'PRIMARY',
-				ttl: 0
+				ttl: 0,
+				webhookLogPrefix: ''
 			});
 		});
 	});
@@ -5984,7 +6129,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6092,7 +6238,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6211,7 +6358,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 0,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6456,7 +6604,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 1,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6580,7 +6729,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 1,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6713,7 +6863,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 1,
 				totalSuccessfulExecutions: 0,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6845,7 +6996,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 1,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -6977,7 +7129,8 @@ describe('/index.ts', () => {
 				totalFailedExecutions: 0,
 				totalSuccessfulExecutions: 1,
 				ttl: 0,
-				type: 'PRIMARY'
+				type: 'PRIMARY',
+				webhookLogPrefix: ''
 			});
 		});
 
@@ -7133,7 +7286,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 1,
 					ttl: 0,
-					type: 'PRIMARY'
+					type: 'PRIMARY',
+					webhookLogPrefix: ''
 				});
 			});
 
@@ -7265,7 +7419,8 @@ describe('/index.ts', () => {
 					totalFailedExecutions: 0,
 					totalSuccessfulExecutions: 1,
 					ttl: 0,
-					type: 'PRIMARY'
+					type: 'PRIMARY',
+					webhookLogPrefix: ''
 				});
 			});
 		});

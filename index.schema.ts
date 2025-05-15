@@ -75,7 +75,8 @@ const task = z.object({
 	totalSuccessfulExecutions: z.number(),
 	title: z.string(),
 	ttl: z.number().min(0),
-	type: taskType
+	type: taskType,
+	webhookLogPrefix: z.string()
 });
 
 const taskRuleResult = z.object({
@@ -94,15 +95,15 @@ const callWebhookInput = z
 	.object({
 		conditionData: z.record(z.any()).nullable(),
 		date: z.date(),
-		executionType: taskExecutionType,
 		eventDelayDebounce: z.boolean().nullable(),
 		eventDelayUnit: timeUnit.nullable(),
 		eventDelayValue: z.number().min(0).nullable(),
+		executionType: taskExecutionType,
 		forkId: z.string().nullable(),
 		forkOnly: z.boolean(),
 		forkOverwrite: z.boolean().default(false),
-		ruleId: z.string().nullable(),
-		keys: z.array(taskKeys)
+		keys: z.array(taskKeys),
+		ruleId: z.string().nullable()
 	})
 	.merge(optionalRequestInput);
 
@@ -316,7 +317,8 @@ const registerTask = task
 		rescheduleOnEvent: true,
 		ruleId: true,
 		scheduledDate: true,
-		title: true
+		title: true,
+		webhookLogPrefix: true
 	})
 	.refine(
 		data => {
@@ -420,7 +422,8 @@ const updateTaskInput = z
 		retryLimit: z.number().min(0).optional(),
 		ruleId: z.string().optional(),
 		scheduledDate: z.string().datetime({ offset: true }).refine(isFutureDate, 'scheduledDate cannot be in the past').optional(),
-		title: z.string().optional()
+		title: z.string().optional(),
+		webhookLogPrefix: z.string().optional()
 	})
 	.refine(
 		data => {
