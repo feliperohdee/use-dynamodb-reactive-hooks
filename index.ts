@@ -345,7 +345,7 @@ class Hooks {
 						task = await this.setTaskLock({ pid, task });
 					}
 
-					const defaultWebhookLogPrefix = _.compact([task.primaryId, task.forkId]).join('#');
+					const defaultWebhookLogPrefix = `${_.compact([task.primaryId, task.forkId]).join('#')}#`;
 
 					// handle rules
 					if (args.ruleId || task!.ruleId) {

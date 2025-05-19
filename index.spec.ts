@@ -409,7 +409,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				logPrefix: task.id,
+				logPrefix: `${task.id}#`,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -542,7 +542,7 @@ describe('/index.ts', () => {
 				task: forkTask
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				logPrefix: `${task.id}#fork-id`,
+				logPrefix: `${task.id}#fork-id#`,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: 'fork-id',
@@ -644,7 +644,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				logPrefix: task.id,
+				logPrefix: `${task.id}#`,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -810,7 +810,7 @@ describe('/index.ts', () => {
 			// @ts-expect-error
 			expect(hooks.setTaskLock).not.toHaveBeenCalled();
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				logPrefix: task.id,
+				logPrefix: `${task.id}#`,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -1018,7 +1018,7 @@ describe('/index.ts', () => {
 				task
 			});
 			expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-				logPrefix: task.id,
+				logPrefix: `${task.id}#`,
 				metadata: {
 					executionType: 'EVENT',
 					forkId: '',
@@ -1152,7 +1152,7 @@ describe('/index.ts', () => {
 					}
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					logPrefix: `${task.id}#fork-id`,
+					logPrefix: `${task.id}#fork-id#`,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: 'fork-id',
@@ -1303,7 +1303,7 @@ describe('/index.ts', () => {
 					}
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					logPrefix: `${task.id}#fork-id`,
+					logPrefix: `${task.id}#fork-id#`,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: 'fork-id',
@@ -1715,7 +1715,7 @@ describe('/index.ts', () => {
 					task
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					logPrefix: task.id,
+					logPrefix: `${task.id}#`,
 					metadata: {
 						executionType: 'SCHEDULED',
 						forkId: '',
@@ -1806,7 +1806,7 @@ describe('/index.ts', () => {
 					task: forkTask
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					logPrefix: `${task.id}#fork-id`,
+					logPrefix: `${task.id}#fork-id#`,
 					metadata: {
 						executionType: 'SCHEDULED',
 						forkId: 'fork-id',
@@ -1936,7 +1936,7 @@ describe('/index.ts', () => {
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					logPrefix: task.id,
+					logPrefix: `${task.id}#`,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: '',
@@ -2095,7 +2095,7 @@ describe('/index.ts', () => {
 				});
 				expect(hooks.webhooks.trigger).toHaveBeenCalledTimes(5);
 				expect(hooks.webhooks.trigger).toHaveBeenCalledWith({
-					logPrefix: task.id,
+					logPrefix: `${task.id}#`,
 					metadata: {
 						executionType: 'EVENT',
 						forkId: '',

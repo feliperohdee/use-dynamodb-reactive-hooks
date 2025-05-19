@@ -40,5 +40,5 @@
 		"test:basic": "./.test.sh --reporter=basic",
 		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
 	},
-	"version": "1.0.49"
+	"version": "1.0.50"
 }
