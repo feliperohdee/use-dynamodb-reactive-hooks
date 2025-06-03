@@ -3018,17 +3018,17 @@ use-async-helpers@^1.0.31:
   resolved "https://registry.yarnpkg.com/use-async-helpers/-/use-async-helpers-1.0.31.tgz#cc9673eead6b4509f361a63887fe0bf15471ec86"
   integrity sha512-sbw+jBC82bzQ6JLCiE8g9Er6eodeepxg8Q1YSrs3MhO8oT7xMV9Rqh1RzrxM2Xy331MX09zAmWwg4WRZQBTkNw==
 
-use-dynamodb-webhooks@^1.0.33:
-  version "1.0.33"
-  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.33.tgz#32d895ba5976ae2e8d42ab8bc61c18918a5e5a26"
-  integrity sha512-cxR4WkCFBNsCqN35FN87EISyqfzIEje/cV9Gis7pMTwzh3qI1OwakTVLgC8rVsZDiPDr6Fmb5YbUhqvLsWCjmA==
+use-dynamodb-webhooks@^1.0.34:
+  version "1.0.34"
+  resolved "https://registry.yarnpkg.com/use-dynamodb-webhooks/-/use-dynamodb-webhooks-1.0.34.tgz#d95ab1c2faa8320252b15db33918a355b0c34e7e"
+  integrity sha512-Y8C8ZQMB6o9mdqcghy0p4zKzkUEBYtzj9rNMiNACfFcJPV6CDDw0wfIg8iyqbcIBqITZOhCVL5hYzwbk1YmJBw==
   dependencies:
     lodash "^4.17.21"
     ulid "^3.0.0"
     use-dynamodb "^1.0.69"
     use-http-error "^1.0.6"
     use-qs "^1.0.4"
-    use-zod-default "^1.0.13"
+    use-zod-default "^1.0.14"
     zod "^3.24.1"
 
 use-dynamodb@^1.0.69:
@@ -3040,14 +3040,14 @@ use-dynamodb@^1.0.69:
     "@aws-sdk/lib-dynamodb" "^3.799.0"
     lodash "^4.17.21"
 
-use-filter-criteria@^1.0.80:
-  version "1.0.80"
-  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.80.tgz#aa300e7cba1763a757fa9b15b1ba75234af44ddb"
-  integrity sha512-QVB89VjmdTNiJ9qD1V0c/g+82xO1pmznnd4JEZcI/cI3VlscnwwEAGzqQTDoXp6xwpDmbHxj5WWsQyNB2Cfr6w==
+use-filter-criteria@^1.0.81:
+  version "1.0.81"
+  resolved "https://registry.yarnpkg.com/use-filter-criteria/-/use-filter-criteria-1.0.81.tgz#0c0a99618f093b372222a48f28050caf77be791d"
+  integrity sha512-fP8mNw68Nls21n6XPmWXDKmkxuoQJNNk1KYqx4piTQCdge92gqsKJgo3Tksp1Tcn1qCDkUD1cAVRybyZkX+8Zw==
   dependencies:
     lodash "^4.17.21"
     use-async-helpers "^1.0.31"
-    use-zod-default "^1.0.13"
+    use-zod-default "^1.0.14"
     zod "^3.24.1"
 
 use-http-error@^1.0.6:
@@ -3062,10 +3062,10 @@ use-qs@^1.0.4:
   dependencies:
     lodash "^4.17.21"
 
-use-zod-default@^1.0.13:
-  version "1.0.13"
-  resolved "https://registry.yarnpkg.com/use-zod-default/-/use-zod-default-1.0.13.tgz#7ddfd350a5eace91274a1ccf70c1467e30a5bcf1"
-  integrity sha512-7kZlWVLW+ZiSURYgqSdqByR0iNzkTP+WeyNFlLocnakmDr/UoFcOVn7HuC+urnC9iqBqwzzF9sEByJznDaYcUQ==
+use-zod-default@^1.0.14:
+  version "1.0.14"
+  resolved "https://registry.yarnpkg.com/use-zod-default/-/use-zod-default-1.0.14.tgz#e13c87c5ab8d85c3ae05ed30331a25bca92fcc68"
+  integrity sha512-82MvLEaa23FBKzi8B94+IQ0LrSgnNOEKN2GCGjtetSXTjH8gTbVMl9OCxYQ7jSZmtSnzdeHPgHODpXXWHfu6uA==
   dependencies:
     lodash "^4.17.21"
     zod "^3.23.8"
